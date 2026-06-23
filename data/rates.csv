@@ -1,0 +1,16 @@
+# Rate card: price per glass type/thickness.
+#
+# Columns:
+#   brand                 - must match an entry in data/brands.txt (case-insensitive)
+#   thickness_mm          - glass thickness in mm
+#   rate_per_mm_per_m2    - "Rate in mm (incl. GST)" exactly as you enter it on a
+#                           quotation today (e.g. quote #1284 used 110 for 4mm sg)
+#   gst_pct               - GST percentage for this item (usually 18)
+#
+# The pipeline NEVER invents a price. If a (brand, thickness) a customer asks for
+# is not in this file, the quote line is flagged "RATE MISSING" in the preview and
+# you fill the rate in before committing. Add rows here as you learn current rates.
+#
+# Lines starting with '#' and blank lines are ignored.
+brand,thickness_mm,rate_per_mm_per_m2,gst_pct
+sg,4,110,18

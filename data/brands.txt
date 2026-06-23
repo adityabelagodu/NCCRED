@@ -1,0 +1,65 @@
+# Glass brand & type catalog for RACHNA ENTERPRISES.
+# Pulled from the "Brand" data-validation list in the quotation workbook.
+# The extractor matches whatever a customer says on a call to the closest entry here.
+# Lines starting with '#' are ignored. One brand/type per line.
+#
+# NOTE: a few entries below (freight, damage, cutting, loading, etc.) are
+# bookkeeping categories in the source sheet, not sellable glass. They are kept
+# so the catalog matches the sheet exactly, but the extractor is told to pick a
+# real glass product for a customer order.
+
+asahi
+asahi aqua blue reflective
+asahi bronze mirror
+asahi bronze tinted
+asahi coral green reflective
+asahi double line design frosted
+asahi frosted
+asahi grey mirror
+asahi grey reflective
+asahi grey tinted
+asahi mirror
+asahi neo golden bronze reflective
+asahi royal blue frosted cross hatch
+asahi royal blue reflective
+ceasars pinhead
+emirates
+ggl
+ggl blue reflective (climaguard)
+ggl bronze reflective (climaguard)
+ggl grey reflective (climaguard)
+ggl mirror
+gold plus
+gpil frosted
+gpil grey tinted
+hng
+hng double line design frosted
+hng mirror
+imported
+imported frosted
+nanumal karthachi
+nanumal kasumi
+nanumal pinhead
+sejal
+sg
+sg bronze reflective
+sg bronze tinted
+sg dark blue reflective
+sg gold mirror
+sg gold reflective
+sg grey reflective
+sg grey tinted
+sg mirror
+sg rose gold mirror
+sg sapphire blue reflective
+sg ultrafix clear silicone
+sumangal fluted
+sumangal karthachi
+sumangal kasumi
+sumangal matrix
+sumangal mgn
+sumangal pinhead
+sumangal sparkle
+wave glass blocks indonesia
+xyg ar
+xyg mirror

@@ -1,0 +1,16 @@
+.env
+*.json
+!*.example.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+# Audio recordings should not be committed.
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.webm

@@ -1,0 +1,11 @@
+Customer call — Mithul Fab — sample transcript for testing the pipeline.
+(You have no real recordings yet; this stands in so you can run the whole flow.)
+
+Agent: Rachna Enterprises, namaskara.
+Customer: Haan, Mithul Fab. Mujhe ek quotation chahiye.
+Agent: Bolo sir, kya chahiye?
+Customer: 4 mm ka SG plain glass. Size 244 by 138 centimeter. Twenty-five sheets chahiye.
+Agent: Theek hai. 4 mm SG, 244 into 138, twenty five sheets. Aur kuch?
+Customer: Bas itna hi abhi. Rate kya rahega?
+Agent: Main quotation bhej deta hoon. Mithul Fab ke naam pe?
+Customer: Haan Mithul Fab. Thank you.
