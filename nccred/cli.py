@@ -71,6 +71,22 @@ def _format_preview(quote: Quote) -> str:
     return "\n".join(lines)
 
 
+def _parse_rate_args(specs: list[str]) -> dict:
+    """Turn --rate 'sg:4:110[:18]' strings into a rates dict to overlay on the CSV."""
+    out: dict = {}
+    for spec in specs:
+        parts = [p.strip() for p in spec.split(":")]
+        if len(parts) < 3:
+            raise SystemExit(
+                f"Bad --rate {spec!r}. Use BRAND:THICKNESS:RATE[:GST], "
+                "e.g. 'sg:4:110' or 'asahi mirror:5:130:18'."
+            )
+        brand, thickness, rate = parts[0], parts[1], parts[2]
+        gst = float(parts[3]) if len(parts) > 3 and parts[3] else config.DEFAULT_GST_PCT
+        out[(brand.lower(), float(thickness))] = {"rate": float(rate), "gst_pct": gst}
+    return out
+
+
 def _get_transcript(args) -> str:
     if args.transcript_text:
         return args.transcript_text
@@ -98,6 +114,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--customer", help="Override the customer name (else taken from the call)"
+    )
+    parser.add_argument(
+        "--rate",
+        action="append",
+        default=[],
+        metavar="BRAND:THICKNESS:RATE[:GST]",
+        help="Supply a rate at confirm time, e.g. --rate 'sg:4:110'. Repeatable; "
+        "overrides data/rates.csv for this run.",
     )
     parser.add_argument(
         "--commit",
@@ -130,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     if not transcript.strip():
         raise SystemExit("Empty transcript — nothing to quote.")
 
+    from .catalog import load_rates
     from .extract import extract_line_items
     from .pricing import build_quote
 
@@ -139,7 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     if not items:
         raise SystemExit("No glass items found in the call.")
 
-    quote = build_quote(customer_name, _today_sheet_format(), items)
+    # Rates from the CSV, with any --rate values given at confirm time on top.
+    rates = load_rates()
+    rates.update(_parse_rate_args(args.rate))
+
+    quote = build_quote(customer_name, _today_sheet_format(), items, rates)
     print(_format_preview(quote))
 
     if not args.commit:

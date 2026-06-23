@@ -91,12 +91,17 @@ Get a key from the Anthropic Console and put it in `.env` as `ANTHROPIC_API_KEY`
   Tell the tool which cell to type the quote number into via
   `NCCRED_QUOTE_INPUT_CELL` (see the PDF section below).
 
-### 4. Fill in your rate card
-`data/rates.csv` ships with only `4mm sg = 110`. Add a row for every glass
-type/thickness you quote, using the same "Rate in mm (incl. GST)" number you'd
-type onto a quotation today. The tool **never invents a price** — if a customer
-asks for something not in this file, that line is flagged `RATE MISSING` in the
-preview and won't be committed until you add the rate.
+### 4. Rates
+The tool **never invents a price**. A rate can come from either:
+
+- **`data/rates.csv`** — a row per glass type/thickness (good for rates you quote
+  often). Ships with only `4mm sg = 110`.
+- **`--rate` at confirm time** — give the rate on the command line for that run,
+  e.g. `--rate 'sg:4:110'` (or `--rate 'asahi mirror:5:130:18'` to also set GST).
+  Repeat the flag for multiple items. This overrides the CSV for that run.
+
+If a line still has no rate from either source, it's flagged `RATE MISSING` in the
+preview and won't be committed until a rate is supplied.
 
 ---
 
