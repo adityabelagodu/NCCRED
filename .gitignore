@@ -7,6 +7,9 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+# Generated quote PDFs hold customer data — keep them out of git.
+output/
+*.pdf
 # Audio recordings should not be committed.
 *.wav
 *.mp3

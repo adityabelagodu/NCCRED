@@ -27,6 +27,7 @@ you for review, and — only when you approve — written into the workbook.
 | `nccred/extract.py` | Transcript → structured glass items, via Claude, matched to your brand catalog |
 | `nccred/pricing.py` | The workbook's pricing formula (verified against quote #1284) |
 | `nccred/sheets.py` | Reads the next quote number; appends approved quotes to the sheet |
+| `nccred/pdf.py` | Exports the formatted quotation tab to a PDF (landscape or portrait) |
 | `nccred/cli.py` | Runs the whole flow; **previews first, writes only on `--commit`** |
 | `data/brands.txt` | Your glass brand/type catalog (pulled from the sheet) |
 | `data/rates.csv` | Your rate card — **you fill this in** (only `4mm sg` is seeded) |
@@ -115,6 +116,26 @@ python -m nccred.cli --audio gs://your-bucket/call-2026-06-23.flac --commit
 `--commit` is the only thing that writes to your live workbook, and it refuses
 if any line is missing a rate. The quote number is taken automatically as one
 past the highest number already on the tab.
+
+### The PDF copy
+
+After a successful commit, the tool exports a **PDF of the quote** from your
+sheet's own formatted layout — it does not recreate the design. Your workbook has
+two print-ready quotation tabs:
+
+- **`claude landscape`** — used when the quote has **8 line items or fewer**
+- **`claude portrait`** — used when the quote has **more than 8 items** (the
+  extra rows need the taller page)
+
+The PDF lands in `output/` as `quote_<number>_<customer>.pdf`. Override the
+choice with `--orientation landscape|portrait`, change the cut-off with
+`NCCRED_PDF_LANDSCAPE_MAX_ITEMS`, or skip the PDF entirely with `--no-pdf`. The
+tab names are configurable too (`NCCRED_PDF_LANDSCAPE_TAB`,
+`NCCRED_PDF_PORTRAIT_TAB`) in case you rename them.
+
+> This exports the tabs **as they currently stand** — it assumes they display the
+> quote you just committed (they read from the data tab). It runs immediately
+> after the commit so the sheet is up to date.
 
 You can also override the customer name (`--customer "Mithul Fab"`) or feed a
 transcript you typed yourself (`--transcript-text "4mm sg 244x138 25 sheets"`).

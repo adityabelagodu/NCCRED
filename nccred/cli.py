@@ -98,6 +98,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="After preview, write the quote to the live sheet (refused if rates missing)",
     )
+    parser.add_argument(
+        "--no-pdf",
+        action="store_true",
+        help="Skip the PDF export after a successful commit",
+    )
+    parser.add_argument(
+        "--orientation",
+        choices=["landscape", "portrait"],
+        help="Force which formatted tab to export (default: landscape for short "
+        "quotes, portrait for many items)",
+    )
     args = parser.parse_args(argv)
 
     transcript = _get_transcript(args)
@@ -138,6 +149,14 @@ def main(argv: list[str] | None = None) -> int:
         f"\nCommitted quote #{quote.quote_number} "
         f"({len(quote.lines)} line(s)) to the sheet."
     )
+
+    if not args.no_pdf:
+        from .pdf import export_quote_pdf, orientation_for
+
+        mode = orientation_for(quote, args.orientation)
+        print(f"Exporting the '{mode}' quotation tab to PDF ...", file=sys.stderr)
+        path = export_quote_pdf(quote, orientation=args.orientation)
+        print(f"PDF saved: {path}")
     return 0
 
 

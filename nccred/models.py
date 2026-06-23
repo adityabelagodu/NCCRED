@@ -48,6 +48,14 @@ class Quote:
         return round(sum(line.taxable for line in self.lines), 2)
 
     @property
+    def cgst_total(self) -> float:
+        return round(sum(line.cgst for line in self.lines), 2)
+
+    @property
+    def sgst_total(self) -> float:
+        return round(sum(line.sgst for line in self.lines), 2)
+
+    @property
     def grand_total(self) -> float:
         return round(sum(line.total for line in self.lines))
 

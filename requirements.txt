@@ -2,5 +2,6 @@ anthropic>=0.49.0
 google-cloud-speech>=2.26.0
 google-api-python-client>=2.120.0
 google-auth>=2.29.0
+requests>=2.31.0
 pydantic>=2.6.0
 python-dotenv>=1.0.0

@@ -37,6 +37,16 @@ DEFAULT_GST_PCT = float(os.environ.get("NCCRED_DEFAULT_GST_PCT", "18.0"))
 # --- Anthropic (extraction) -------------------------------------------------
 ANTHROPIC_MODEL = os.environ.get("NCCRED_ANTHROPIC_MODEL", "claude-opus-4-8")
 
+# --- PDF output -------------------------------------------------------------
+# The PDF is a direct export of a pre-formatted quotation tab in your workbook.
+# Where the exported PDFs are saved.
+PDF_OUTPUT_DIR = Path(os.environ.get("NCCRED_PDF_OUTPUT_DIR", ROOT / "output"))
+# The two formatted quotation tabs in the sheet (one per orientation).
+PDF_LANDSCAPE_TAB = os.environ.get("NCCRED_PDF_LANDSCAPE_TAB", "claude landscape")
+PDF_PORTRAIT_TAB = os.environ.get("NCCRED_PDF_PORTRAIT_TAB", "claude portrait")
+# Quotes with this many line items or fewer use the landscape tab; more -> portrait.
+PDF_LANDSCAPE_MAX_ITEMS = int(os.environ.get("NCCRED_PDF_LANDSCAPE_MAX_ITEMS", "8"))
+
 # --- Google Speech-to-Text (transcription) ----------------------------------
 # Calls are Kannada / Hindi / English mix, so we transcribe with a primary
 # language plus alternates.

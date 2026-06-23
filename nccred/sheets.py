@@ -19,6 +19,8 @@ from . import config
 from .models import Quote
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# The PDF export endpoint (docs.google.com/.../export) needs a Drive read scope.
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 # 1-based column index of the quote-number column on the data tab (C = 3).
 QUOTE_NUMBER_COL = 3
@@ -26,9 +28,8 @@ QUOTE_NUMBER_COL = 3
 FIRST_DATA_ROW = 2
 
 
-def _service():
+def _credentials(scopes: list[str]):
     from google.oauth2 import service_account
-    from googleapiclient.discovery import build
 
     import os
 
@@ -38,10 +39,39 @@ def _service():
             "GOOGLE_APPLICATION_CREDENTIALS is not set. Point it at your service "
             "account JSON key (see README)."
         )
-    creds = service_account.Credentials.from_service_account_file(
-        creds_path, scopes=SCOPES
+    return service_account.Credentials.from_service_account_file(
+        creds_path, scopes=scopes
     )
-    return build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+
+def _service():
+    from googleapiclient.discovery import build
+
+    return build(
+        "sheets", "v4", credentials=_credentials(SCOPES), cache_discovery=False
+    )
+
+
+def get_sheet_gid(tab_title: str) -> int:
+    """Look up a tab's numeric gid by its (case-insensitive) title."""
+    svc = _service()
+    meta = (
+        svc.spreadsheets()
+        .get(
+            spreadsheetId=config.SPREADSHEET_ID,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute()
+    )
+    want = tab_title.strip().lower()
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties", {})
+        if str(props.get("title", "")).strip().lower() == want:
+            return int(props["sheetId"])
+    titles = [s.get("properties", {}).get("title") for s in meta.get("sheets", [])]
+    raise RuntimeError(
+        f"Tab {tab_title!r} not found in the workbook. Tabs present: {titles}"
+    )
 
 
 def _col_letter(index_1based: int) -> str:
