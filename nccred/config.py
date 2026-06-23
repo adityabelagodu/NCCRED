@@ -21,9 +21,8 @@ SPREADSHEET_ID = os.environ.get(
     "NCCRED_SPREADSHEET_ID", "1pGnEoZA6kaFr75BP0DBcAJtsF4EFKPic7CRhnabNqh0"
 )
 # The tab that holds one quote per row (columns: DATE, quote#, Customer name,
-# Thickness mm, Brand, Length, Breadth, No. of sheets, Rate ...). Set this to the
-# exact tab name in your workbook; see the README for how to find it.
-DATA_TAB = os.environ.get("NCCRED_DATA_TAB", "Data")
+# Thickness mm, Brand, Length, Breadth, No. of sheets, Rate ...).
+DATA_TAB = os.environ.get("NCCRED_DATA_TAB", "QUOTATIONS")
 
 # --- Catalog & rates --------------------------------------------------------
 BRANDS_FILE = Path(os.environ.get("NCCRED_BRANDS_FILE", DATA_DIR / "brands.txt"))
@@ -41,11 +40,33 @@ ANTHROPIC_MODEL = os.environ.get("NCCRED_ANTHROPIC_MODEL", "claude-opus-4-8")
 # The PDF is a direct export of a pre-formatted quotation tab in your workbook.
 # Where the exported PDFs are saved.
 PDF_OUTPUT_DIR = Path(os.environ.get("NCCRED_PDF_OUTPUT_DIR", ROOT / "output"))
-# The two formatted quotation tabs in the sheet (one per orientation).
-PDF_LANDSCAPE_TAB = os.environ.get("NCCRED_PDF_LANDSCAPE_TAB", "claude landscape")
-PDF_PORTRAIT_TAB = os.environ.get("NCCRED_PDF_PORTRAIT_TAB", "claude portrait")
-# Quotes with this many line items or fewer use the landscape tab; more -> portrait.
+
+# Quotes with this many line items or fewer use a landscape tab; more -> portrait.
 PDF_LANDSCAPE_MAX_ITEMS = int(os.environ.get("NCCRED_PDF_LANDSCAPE_MAX_ITEMS", "8"))
+
+# "Latest" tabs: auto-show the most recently added quote (no quote number fed in).
+# Used right after committing a new quote.
+PDF_LATEST_LANDSCAPE_TAB = os.environ.get(
+    "NCCRED_PDF_LATEST_LANDSCAPE_TAB", "claude landscape"
+)
+PDF_LATEST_PORTRAIT_TAB = os.environ.get(
+    "NCCRED_PDF_LATEST_PORTRAIT_TAB", "claude portrait"
+)
+
+# "Lookup" tabs: fetch any quote by typing its number into QUOTE_INPUT_CELL.
+# Used to re-print an older quote.
+PDF_LOOKUP_LANDSCAPE_TAB = os.environ.get("NCCRED_PDF_LOOKUP_LANDSCAPE_TAB", "landscape")
+PDF_LOOKUP_PORTRAIT_TAB = os.environ.get("NCCRED_PDF_LOOKUP_PORTRAIT_TAB", "portrait")
+
+# The cell on the lookup tabs where the quote number is typed to fetch a quote.
+# Set NCCRED_QUOTE_INPUT_CELL (and optionally per-tab overrides). e.g. "C5".
+QUOTE_INPUT_CELL = os.environ.get("NCCRED_QUOTE_INPUT_CELL", "")
+QUOTE_INPUT_CELL_LANDSCAPE = os.environ.get(
+    "NCCRED_QUOTE_INPUT_CELL_LANDSCAPE", QUOTE_INPUT_CELL
+)
+QUOTE_INPUT_CELL_PORTRAIT = os.environ.get(
+    "NCCRED_QUOTE_INPUT_CELL_PORTRAIT", QUOTE_INPUT_CELL
+)
 
 # --- Google Speech-to-Text (transcription) ----------------------------------
 # Calls are Kannada / Hindi / English mix, so we transcribe with a primary

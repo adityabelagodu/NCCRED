@@ -91,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--transcript", help="Path to a text transcript")
     src.add_argument("--transcript-text", help="A transcript passed inline as a string")
     parser.add_argument(
+        "--pull",
+        type=int,
+        metavar="QUOTE_NUMBER",
+        help="Re-print an existing quote as PDF by its number (no call needed)",
+    )
+    parser.add_argument(
         "--customer", help="Override the customer name (else taken from the call)"
     )
     parser.add_argument(
@@ -110,6 +116,15 @@ def main(argv: list[str] | None = None) -> int:
         "quotes, portrait for many items)",
     )
     args = parser.parse_args(argv)
+
+    # Re-print an existing quote by number — no call, no extraction, no pricing.
+    if args.pull is not None:
+        from .pdf import export_quote_by_number
+
+        print(f"Fetching quote #{args.pull} and exporting to PDF ...", file=sys.stderr)
+        path = export_quote_by_number(args.pull, orientation=args.orientation)
+        print(f"PDF saved: {path}")
+        return 0
 
     transcript = _get_transcript(args)
     if not transcript.strip():
@@ -151,11 +166,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if not args.no_pdf:
-        from .pdf import export_quote_pdf, orientation_for
+        from .pdf import _orientation, export_latest_quote_pdf
 
-        mode = orientation_for(quote, args.orientation)
-        print(f"Exporting the '{mode}' quotation tab to PDF ...", file=sys.stderr)
-        path = export_quote_pdf(quote, orientation=args.orientation)
+        mode = _orientation(len(quote.lines), args.orientation)
+        print(
+            f"Exporting the latest-quote '{mode}' tab to PDF ...", file=sys.stderr
+        )
+        path = export_latest_quote_pdf(quote, orientation=args.orientation)
         print(f"PDF saved: {path}")
     return 0
 

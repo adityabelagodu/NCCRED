@@ -109,6 +109,76 @@ def next_quote_number(default_start: int = 1285) -> int:
     return (max(numbers) + 1) if numbers else default_start
 
 
+# Column letters on the data tab (B DATE, C quote#, D Customer).
+DATE_COL = 2
+CUSTOMER_COL = 4
+
+
+def read_cell(tab: str, a1_cell: str) -> str | None:
+    """Read a single cell's displayed value, e.g. read_cell('landscape', 'C5')."""
+    svc = _service()
+    result = (
+        svc.spreadsheets()
+        .values()
+        .get(spreadsheetId=config.SPREADSHEET_ID, range=f"{tab}!{a1_cell}")
+        .execute()
+    )
+    values = result.get("values", [])
+    if values and values[0]:
+        return values[0][0]
+    return None
+
+
+def write_cell(tab: str, a1_cell: str, value) -> None:
+    """Write a single cell, e.g. write_cell('landscape', 'C5', 1284)."""
+    svc = _service()
+    svc.spreadsheets().values().update(
+        spreadsheetId=config.SPREADSHEET_ID,
+        range=f"{tab}!{a1_cell}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[value]]},
+    ).execute()
+
+
+def quote_summary(quote_number: int) -> dict:
+    """Look up an existing quote on the data tab.
+
+    Returns {"count": <line items>, "customer": <name>, "date": <date>}. count is
+    0 if the quote number isn't found.
+    """
+    svc = _service()
+    qcol = _col_letter(QUOTE_NUMBER_COL)
+    dcol = _col_letter(DATE_COL)
+    ccol = _col_letter(CUSTOMER_COL)
+    # Read DATE..Customer (B:D) in one shot.
+    rng = f"{config.DATA_TAB}!{dcol}{FIRST_DATA_ROW}:{ccol}"
+    rows = (
+        svc.spreadsheets()
+        .values()
+        .get(spreadsheetId=config.SPREADSHEET_ID, range=rng)
+        .execute()
+        .get("values", [])
+    )
+    # In the B:D window, index 0 = DATE(B), 1 = quote#(C), 2 = Customer(D).
+    count = 0
+    customer = ""
+    date = ""
+    for row in rows:
+        if len(row) < 2:
+            continue
+        try:
+            row_quote = int(float(str(row[1]).strip()))
+        except (ValueError, TypeError):
+            continue
+        if row_quote == quote_number:
+            count += 1
+            if not date and len(row) > 0:
+                date = str(row[0]).strip()
+            if not customer and len(row) > 2:
+                customer = str(row[2]).strip()
+    return {"count": count, "customer": customer, "date": date}
+
+
 def _quote_to_rows(quote: Quote) -> list[list]:
     """One sheet row per priced line, columns A..J."""
     rows: list[list] = []

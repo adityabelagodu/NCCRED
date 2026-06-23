@@ -82,12 +82,14 @@ Get a key from the Anthropic Console and put it in `.env` as `ANTHROPIC_API_KEY`
    spreadsheet with that email as an Editor** — exactly like sharing with a
    colleague. This is what lets the tool write quotes back.
 
-### 3. Tell it which tab holds the quote rows
-The workbook has a tab with one quote per row (columns `DATE`, `quote#`,
-`Customer name`, `Thickness mm`, `Brand`, `Length`, `Breadth`, `No. of sheets`,
-`Rate ...`). Open the sheet, note that tab's **exact name** from the bottom of
-the window, and set `NCCRED_DATA_TAB` in `.env` to it (the default guess is
-`Data`).
+### 3. Tabs the tool uses
+- **`QUOTATIONS`** — the one-quote-per-row data tab the tool appends to and reads
+  from. This is the default; change it with `NCCRED_DATA_TAB` if you rename it.
+- **`claude landscape` / `claude portrait`** — auto-show the latest quote; used
+  for the PDF right after a commit.
+- **`landscape` / `portrait`** — fetch any quote by number; used by `--pull`.
+  Tell the tool which cell to type the quote number into via
+  `NCCRED_QUOTE_INPUT_CELL` (see the PDF section below).
 
 ### 4. Fill in your rate card
 `data/rates.csv` ships with only `4mm sg = 110`. Add a row for every glass
@@ -119,23 +121,39 @@ past the highest number already on the tab.
 
 ### The PDF copy
 
-After a successful commit, the tool exports a **PDF of the quote** from your
-sheet's own formatted layout — it does not recreate the design. Your workbook has
-two print-ready quotation tabs:
+PDFs come straight from your sheet's own formatted layout — the tool does not
+recreate the design. The workbook has **two pairs** of print-ready tabs, landscape
+for few items and portrait for many:
 
-- **`claude landscape`** — used when the quote has **8 line items or fewer**
-- **`claude portrait`** — used when the quote has **more than 8 items** (the
-  extra rows need the taller page)
+| Tabs | When used | How the quote gets there |
+|------|-----------|--------------------------|
+| `claude landscape` / `claude portrait` | right after committing a **new** quote | they auto-show the latest quote |
+| `landscape` / `portrait` | **re-printing an older** quote | the tool types the quote number into a cell |
 
-The PDF lands in `output/` as `quote_<number>_<customer>.pdf`. Override the
-choice with `--orientation landscape|portrait`, change the cut-off with
-`NCCRED_PDF_LANDSCAPE_MAX_ITEMS`, or skip the PDF entirely with `--no-pdf`. The
-tab names are configurable too (`NCCRED_PDF_LANDSCAPE_TAB`,
-`NCCRED_PDF_PORTRAIT_TAB`) in case you rename them.
+In both pairs: **8 line items or fewer → landscape, more than 8 → portrait.**
 
-> This exports the tabs **as they currently stand** — it assumes they display the
-> quote you just committed (they read from the data tab). It runs immediately
-> after the commit so the sheet is up to date.
+**New quote** — after `--commit`, the PDF is exported automatically from the
+`claude landscape` / `claude portrait` tab and saved to
+`output/quote_<number>_<customer>.pdf`.
+
+**Re-print an old quote** — give the quote number, no call needed:
+
+```bash
+python -m nccred.cli --pull 1284
+```
+
+This reads the `QUOTATIONS` tab to count that quote's items (to pick the tab),
+types `1284` into the lookup tab's input cell, exports the PDF, then puts the cell
+back as it was.
+
+For re-printing to work you must tell the tool which cell to type the number
+into, via `NCCRED_QUOTE_INPUT_CELL` in `.env` (e.g. `C5`). Use
+`NCCRED_QUOTE_INPUT_CELL_LANDSCAPE` / `_PORTRAIT` if the two lookup tabs use
+different cells.
+
+Common flags: `--orientation landscape|portrait` forces the tab,
+`NCCRED_PDF_LANDSCAPE_MAX_ITEMS` changes the cut-off, `--no-pdf` skips the export
+after a commit. Tab names are configurable too (see `.env.example`).
 
 You can also override the customer name (`--customer "Mithul Fab"`) or feed a
 transcript you typed yourself (`--transcript-text "4mm sg 244x138 25 sheets"`).
