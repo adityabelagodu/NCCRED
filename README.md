@@ -143,12 +143,11 @@ python -m nccred.cli --pull 1284
 ```
 
 This reads the `QUOTATIONS` tab to count that quote's items (to pick the tab),
-types `1284` into the lookup tab's input cell, exports the PDF, then puts the cell
-back as it was.
+types `1284` into the lookup tab's input cell (**H4** by default), exports the
+PDF, then puts the cell back as it was.
 
-For re-printing to work you must tell the tool which cell to type the number
-into, via `NCCRED_QUOTE_INPUT_CELL` in `.env` (e.g. `C5`). Use
-`NCCRED_QUOTE_INPUT_CELL_LANDSCAPE` / `_PORTRAIT` if the two lookup tabs use
+The input cell defaults to `H4`. Change it with `NCCRED_QUOTE_INPUT_CELL`, or use
+`NCCRED_QUOTE_INPUT_CELL_LANDSCAPE` / `_PORTRAIT` if the two lookup tabs ever use
 different cells.
 
 Common flags: `--orientation landscape|portrait` forces the tab,

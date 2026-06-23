@@ -59,8 +59,8 @@ PDF_LOOKUP_LANDSCAPE_TAB = os.environ.get("NCCRED_PDF_LOOKUP_LANDSCAPE_TAB", "la
 PDF_LOOKUP_PORTRAIT_TAB = os.environ.get("NCCRED_PDF_LOOKUP_PORTRAIT_TAB", "portrait")
 
 # The cell on the lookup tabs where the quote number is typed to fetch a quote.
-# Set NCCRED_QUOTE_INPUT_CELL (and optionally per-tab overrides). e.g. "C5".
-QUOTE_INPUT_CELL = os.environ.get("NCCRED_QUOTE_INPUT_CELL", "")
+# Both 'landscape' and 'portrait' use H4; override per-tab below if that changes.
+QUOTE_INPUT_CELL = os.environ.get("NCCRED_QUOTE_INPUT_CELL", "H4")
 QUOTE_INPUT_CELL_LANDSCAPE = os.environ.get(
     "NCCRED_QUOTE_INPUT_CELL_LANDSCAPE", QUOTE_INPUT_CELL
 )
