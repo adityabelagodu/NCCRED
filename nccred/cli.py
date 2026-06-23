@@ -107,6 +107,11 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--transcript", help="Path to a text transcript")
     src.add_argument("--transcript-text", help="A transcript passed inline as a string")
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify the setup (keys, packages, sheet access) and exit",
+    )
+    parser.add_argument(
         "--pull",
         type=int,
         metavar="QUOTE_NUMBER",
@@ -140,6 +145,11 @@ def main(argv: list[str] | None = None) -> int:
         "quotes, portrait for many items)",
     )
     args = parser.parse_args(argv)
+
+    if args.check:
+        from .doctor import run
+
+        return run()
 
     # Re-print an existing quote by number — no call, no extraction, no pricing.
     if args.pull is not None:

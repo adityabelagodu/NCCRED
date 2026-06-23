@@ -67,6 +67,19 @@ You'll see a preview like:
 
 ---
 
+## Check your setup
+
+Once you've filled in `.env` and shared the sheet, confirm everything is wired:
+
+```bash
+python -m nccred.cli --check
+```
+
+It verifies the packages are installed, the keys are present, the Anthropic API
+answers, the service account can open the spreadsheet, and all the expected tabs
+exist — printing PASS/FAIL for each (and the service-account email you need to
+share the sheet with). No secrets are printed.
+
 ## Setup
 
 ### 1. Anthropic API key (for reading the call)
