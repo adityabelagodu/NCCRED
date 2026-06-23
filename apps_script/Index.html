@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, Roboto, Arial, sans-serif; margin: 0;
+           padding: 16px; background: #f4f1ea; color: #222; font-size: 17px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 22px 0 8px; color: #444; }
+    .sub { color: #777; font-size: 13px; margin-bottom: 16px; }
+    label { display: block; font-weight: 600; margin: 12px 0 4px; }
+    input, textarea, button { width: 100%; font-size: 17px; padding: 12px;
+           border: 1px solid #ccc; border-radius: 10px; font-family: inherit; }
+    textarea { min-height: 84px; }
+    button { background: #b5562b; color: #fff; border: none; font-weight: 700;
+             margin-top: 14px; }
+    button.secondary { background: #fff; color: #b5562b; border: 1px solid #b5562b; }
+    button:disabled { opacity: .5; }
+    .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px;
+            border: 1px solid #e6e0d4; }
+    .row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .muted { color: #888; font-size: 13px; }
+    .err { color: #b00020; font-weight: 600; }
+    .ok { color: #1a7f37; font-weight: 700; }
+    .total { font-weight: 800; font-size: 18px; border-top: 1px solid #ddd;
+             margin-top: 6px; padding-top: 6px; }
+    a.btnlink { display: block; text-align: center; background: #1a7f37; color: #fff;
+                text-decoration: none; padding: 12px; border-radius: 10px; margin-top: 10px; }
+    hr { border: none; border-top: 1px dashed #ccc; margin: 26px 0; }
+  </style>
+</head>
+<body>
+  <h1>Rachna Enterprises — Quote</h1>
+  <div class="sub">Type the order, add the rate, preview, then save.</div>
+
+  <label>Customer name</label>
+  <input id="customer" placeholder="e.g. Mithul Fab">
+
+  <label>What does the customer want?</label>
+  <textarea id="order" placeholder="e.g. 4mm SG, 244 x 138 cm, 25 sheets. You can use the mic on your keyboard."></textarea>
+
+  <label>Rate(s) — one per line: brand, thickness, rate</label>
+  <textarea id="rates" placeholder="sg, 4, 110"></textarea>
+  <div class="muted">Add GST only if not 18%, e.g. "sg, 4, 110, 12".</div>
+
+  <button id="previewBtn" onclick="doPreview()">Preview quote</button>
+  <div id="status" class="muted" style="margin-top:10px;"></div>
+  <div id="preview"></div>
+
+  <hr>
+  <h2>Re-print an old quote</h2>
+  <label>Quote number</label>
+  <input id="reprintNum" inputmode="numeric" placeholder="e.g. 1284">
+  <button class="secondary" onclick="doReprint()">Get PDF</button>
+  <div id="reprintStatus" class="muted" style="margin-top:10px;"></div>
+
+<script>
+  var lastPreview = null;
+
+  function setBusy(id, msg) { document.getElementById(id).innerHTML = msg; }
+  function money(n) { return Number(n).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+
+  function doPreview() {
+    var form = {
+      customer: document.getElementById('customer').value,
+      order: document.getElementById('order').value,
+      rates: document.getElementById('rates').value
+    };
+    if (!form.order.trim()) { setBusy('status', '<span class="err">Type the order first.</span>'); return; }
+    document.getElementById('previewBtn').disabled = true;
+    setBusy('status', 'Reading the order…');
+    document.getElementById('preview').innerHTML = '';
+    google.script.run
+      .withSuccessHandler(showPreview)
+      .withFailureHandler(function (e) {
+        document.getElementById('previewBtn').disabled = false;
+        setBusy('status', '<span class="err">' + e.message + '</span>');
+      })
+      .previewQuote(form);
+  }
+
+  function showPreview(q) {
+    document.getElementById('previewBtn').disabled = false;
+    lastPreview = q;
+    setBusy('status', '');
+    var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> · ' + q.date;
+    q.lines.forEach(function (l, i) {
+      html += '<div class="row"><span>' + (i + 1) + '. ' + l.thickness_mm + 'mm ' + l.brand +
+              ' · ' + l.length_cm + 'x' + l.breadth_cm + 'cm · ' + l.sheets + ' sheets</span><span>' +
+              (l.rate_missing ? '<span class="err">no rate</span>' : '₹' + money(l.total)) + '</span></div>';
+      if (l.notes) html += '<div class="muted">' + l.notes + '</div>';
+    });
+    if (q.missing.length) {
+      html += '<div class="err" style="margin-top:8px;">Add rate(s) for: ' + q.missing.join(', ') +
+              '<br>Put them in the Rate box above and press Preview again.</div>';
+    } else {
+      html += '<div class="row" style="margin-top:6px;"><span>Taxable</span><span>₹' + money(q.totals.taxable) + '</span></div>';
+      html += '<div class="row"><span>CGST</span><span>₹' + money(q.totals.cgst) + '</span></div>';
+      html += '<div class="row"><span>SGST</span><span>₹' + money(q.totals.sgst) + '</span></div>';
+      html += '<div class="row total"><span>Total</span><span>₹' + money(q.totals.total) + '</span></div>';
+    }
+    html += '</div>';
+    if (q.ok) {
+      html += '<button onclick="doCommit()">Confirm &amp; save + PDF (' +
+              (q.lines.length > 8 ? 'portrait' : 'landscape') + ')</button>';
+    }
+    document.getElementById('preview').innerHTML = html;
+  }
+
+  function doCommit() {
+    if (!lastPreview) return;
+    setBusy('status', 'Saving and making the PDF…');
+    document.querySelectorAll('#preview button').forEach(function (b) { b.disabled = true; });
+    google.script.run
+      .withSuccessHandler(function (res) {
+        setBusy('status', '');
+        document.getElementById('preview').innerHTML =
+          '<div class="card"><div class="ok">Saved quote #' + res.quoteNumber +
+          ' (' + res.orientation + ').</div><div class="muted">PDF emailed to you.</div>' +
+          '<a class="btnlink" href="' + res.link + '" target="_blank">Open PDF</a></div>';
+        lastPreview = null;
+      })
+      .withFailureHandler(function (e) { setBusy('status', '<span class="err">' + e.message + '</span>'); })
+      .commitQuote(lastPreview);
+  }
+
+  function doReprint() {
+    var n = document.getElementById('reprintNum').value;
+    if (!n) { setBusy('reprintStatus', '<span class="err">Enter a number.</span>'); return; }
+    setBusy('reprintStatus', 'Fetching quote #' + n + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        setBusy('reprintStatus',
+          '<span class="ok">Quote #' + res.quoteNumber + ' (' + res.orientation +
+          ') emailed.</span> <a href="' + res.link + '" target="_blank">Open PDF</a>');
+      })
+      .withFailureHandler(function (e) { setBusy('reprintStatus', '<span class="err">' + e.message + '</span>'); })
+      .reprintQuote(n);
+  }
+</script>
+</body>
+</html>

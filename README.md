@@ -1,7 +1,13 @@
 # NCCRED — call recordings → glass quotes
 
 Turn a recorded customer call into a new quote in the RACHNA ENTERPRISES
-quotation sheet. The call is transcribed, the glass order is pulled out of the
+quotation sheet.
+
+> **On a phone, no computer to run commands?** Use the in-sheet version instead:
+> a "Make Quote" web page that lives inside your Google Sheet and runs from your
+> phone. One-time setup (~15 min on a computer) is in
+> [`apps_script/README.md`](apps_script/README.md). The Python tool below is for
+> running on a Windows/Mac computer. The call is transcribed, the glass order is pulled out of the
 (Kannada / Hindi / English) conversation, priced using your rate card, shown to
 you for review, and — only when you approve — written into the workbook.
 
