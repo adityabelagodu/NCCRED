@@ -10,40 +10,40 @@
     h1 { font-size: 20px; margin: 0 0 4px; }
     h2 { font-size: 16px; margin: 22px 0 8px; color: #444; }
     .sub { color: #777; font-size: 13px; margin-bottom: 16px; }
-    label { display: block; font-weight: 600; margin: 12px 0 4px; }
-    input, textarea, button { width: 100%; font-size: 17px; padding: 12px;
-           border: 1px solid #ccc; border-radius: 10px; font-family: inherit; }
-    textarea { min-height: 84px; }
-    button { background: #b5562b; color: #fff; border: none; font-weight: 700;
-             margin-top: 14px; }
+    label { display: block; font-weight: 600; margin: 10px 0 4px; font-size: 14px; }
+    input, select, textarea, button { width: 100%; font-size: 17px; padding: 11px;
+           border: 1px solid #ccc; border-radius: 10px; font-family: inherit; background: #fff; }
+    button { background: #b5562b; color: #fff; border: none; font-weight: 700; margin-top: 14px; }
     button.secondary { background: #fff; color: #b5562b; border: 1px solid #b5562b; }
+    button.small { width: auto; padding: 7px 12px; font-size: 14px; margin-top: 8px; }
     button:disabled { opacity: .5; }
-    .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px;
-            border: 1px solid #e6e0d4; }
+    .item { background: #fff; border: 1px solid #e6e0d4; border-radius: 12px;
+            padding: 12px; margin-top: 12px; }
+    .item .head { display: flex; justify-content: space-between; align-items: center; }
+    .item .head b { font-size: 15px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .rm { color: #b00020; background: none; border: none; width: auto; font-size: 14px;
+          padding: 4px; margin: 0; }
+    .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; border: 1px solid #e6e0d4; }
     .row { display: flex; justify-content: space-between; padding: 3px 0; }
     .muted { color: #888; font-size: 13px; }
     .err { color: #b00020; font-weight: 600; }
     .ok { color: #1a7f37; font-weight: 700; }
-    .total { font-weight: 800; font-size: 18px; border-top: 1px solid #ddd;
-             margin-top: 6px; padding-top: 6px; }
+    .total { font-weight: 800; font-size: 18px; border-top: 1px solid #ddd; margin-top: 6px; padding-top: 6px; }
     a.btnlink { display: block; text-align: center; background: #1a7f37; color: #fff;
                 text-decoration: none; padding: 12px; border-radius: 10px; margin-top: 10px; }
     hr { border: none; border-top: 1px dashed #ccc; margin: 26px 0; }
   </style>
 </head>
 <body>
-  <h1>Rachna Enterprises — Quote</h1>
-  <div class="sub">Type the order, add the rate, preview, then save.</div>
+  <h1>Rachna Enterprises - Quote</h1>
+  <div class="sub">Fill the items, preview, then save. No typing of full sentences.</div>
 
   <label>Customer name</label>
   <input id="customer" placeholder="e.g. Mithul Fab">
 
-  <label>What does the customer want?</label>
-  <textarea id="order" placeholder="e.g. 4mm SG, 244 x 138 cm, 25 sheets. You can use the mic on your keyboard."></textarea>
-
-  <label>Rate(s) — one per line: brand, thickness, rate</label>
-  <textarea id="rates" placeholder="sg, 4, 110"></textarea>
-  <div class="muted">Add GST only if not 18%, e.g. "sg, 4, 110, 12".</div>
+  <div id="items"></div>
+  <button class="secondary small" onclick="addItem()">+ Add item</button>
 
   <button id="previewBtn" onclick="doPreview()">Preview quote</button>
   <div id="status" class="muted" style="margin-top:10px;"></div>
@@ -57,20 +57,56 @@
   <div id="reprintStatus" class="muted" style="margin-top:10px;"></div>
 
 <script>
+  var BRANDS = <?!= brandsJson ?>;
+  var itemCount = 0;
   var lastPreview = null;
+
+  function brandOptions() {
+    var s = '<option value="">— choose —</option>';
+    BRANDS.forEach(function (b) { s += '<option value="' + b + '">' + b + '</option>'; });
+    return s;
+  }
+
+  function addItem() {
+    itemCount++;
+    var div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML =
+      '<div class="head"><b>Item ' + itemCount + '</b>' +
+      '<button class="rm" onclick="this.parentNode.parentNode.remove()">remove</button></div>' +
+      '<label>Brand / type</label><select class="it-brand">' + brandOptions() + '</select>' +
+      '<div class="grid2">' +
+      '<div><label>Thickness (mm)</label><input class="it-thk" inputmode="decimal" placeholder="4"></div>' +
+      '<div><label>No. of sheets</label><input class="it-sheets" inputmode="numeric" placeholder="25"></div>' +
+      '<div><label>Length (cm)</label><input class="it-len" inputmode="decimal" placeholder="244"></div>' +
+      '<div><label>Breadth (cm)</label><input class="it-brd" inputmode="decimal" placeholder="138"></div>' +
+      '</div>' +
+      '<label>Rate per mm (incl. GST)</label><input class="it-rate" inputmode="decimal" placeholder="110">';
+    document.getElementById('items').appendChild(div);
+  }
+
+  function collectItems() {
+    var out = [];
+    document.querySelectorAll('.item').forEach(function (el) {
+      out.push({
+        thickness: el.querySelector('.it-thk').value.trim(),
+        brand: el.querySelector('.it-brand').value,
+        length: el.querySelector('.it-len').value.trim(),
+        breadth: el.querySelector('.it-brd').value.trim(),
+        sheets: el.querySelector('.it-sheets').value.trim(),
+        rate: el.querySelector('.it-rate').value.trim()
+      });
+    });
+    return out;
+  }
 
   function setBusy(id, msg) { document.getElementById(id).innerHTML = msg; }
   function money(n) { return Number(n).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
 
   function doPreview() {
-    var form = {
-      customer: document.getElementById('customer').value,
-      order: document.getElementById('order').value,
-      rates: document.getElementById('rates').value
-    };
-    if (!form.order.trim()) { setBusy('status', '<span class="err">Type the order first.</span>'); return; }
+    var payload = { customer: document.getElementById('customer').value, items: collectItems() };
     document.getElementById('previewBtn').disabled = true;
-    setBusy('status', 'Reading the order…');
+    setBusy('status', 'Working…');
     document.getElementById('preview').innerHTML = '';
     google.script.run
       .withSuccessHandler(showPreview)
@@ -78,28 +114,26 @@
         document.getElementById('previewBtn').disabled = false;
         setBusy('status', '<span class="err">' + e.message + '</span>');
       })
-      .previewQuote(form);
+      .previewQuote(payload);
   }
 
   function showPreview(q) {
     document.getElementById('previewBtn').disabled = false;
     lastPreview = q;
     setBusy('status', '');
-    var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> · ' + q.date;
+    var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> &middot; ' + q.date;
     q.lines.forEach(function (l, i) {
       html += '<div class="row"><span>' + (i + 1) + '. ' + l.thickness_mm + 'mm ' + l.brand +
-              ' · ' + l.length_cm + 'x' + l.breadth_cm + 'cm · ' + l.sheets + ' sheets</span><span>' +
-              (l.rate_missing ? '<span class="err">no rate</span>' : '₹' + money(l.total)) + '</span></div>';
-      if (l.notes) html += '<div class="muted">' + l.notes + '</div>';
+              ' &middot; ' + l.length_cm + 'x' + l.breadth_cm + 'cm &middot; ' + l.sheets + ' sheets</span><span>' +
+              (l.rate_missing ? '<span class="err">no rate</span>' : '&#8377;' + money(l.total)) + '</span></div>';
     });
     if (q.missing.length) {
-      html += '<div class="err" style="margin-top:8px;">Add rate(s) for: ' + q.missing.join(', ') +
-              '<br>Put them in the Rate box above and press Preview again.</div>';
+      html += '<div class="err" style="margin-top:8px;">Enter the Rate for: ' + q.missing.join(', ') + '</div>';
     } else {
-      html += '<div class="row" style="margin-top:6px;"><span>Taxable</span><span>₹' + money(q.totals.taxable) + '</span></div>';
-      html += '<div class="row"><span>CGST</span><span>₹' + money(q.totals.cgst) + '</span></div>';
-      html += '<div class="row"><span>SGST</span><span>₹' + money(q.totals.sgst) + '</span></div>';
-      html += '<div class="row total"><span>Total</span><span>₹' + money(q.totals.total) + '</span></div>';
+      html += '<div class="row" style="margin-top:6px;"><span>Taxable</span><span>&#8377;' + money(q.totals.taxable) + '</span></div>';
+      html += '<div class="row"><span>CGST</span><span>&#8377;' + money(q.totals.cgst) + '</span></div>';
+      html += '<div class="row"><span>SGST</span><span>&#8377;' + money(q.totals.sgst) + '</span></div>';
+      html += '<div class="row total"><span>Total</span><span>&#8377;' + money(q.totals.total) + '</span></div>';
     }
     html += '</div>';
     if (q.ok) {
@@ -139,6 +173,8 @@
       .withFailureHandler(function (e) { setBusy('reprintStatus', '<span class="err">' + e.message + '</span>'); })
       .reprintQuote(n);
   }
+
+  addItem(); // start with one item row
 </script>
 </body>
 </html>

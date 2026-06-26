@@ -1,17 +1,17 @@
 /**
- * RACHNA ENTERPRISES — phone-friendly quote maker (Google Apps Script).
+ * RACHNA ENTERPRISES — phone quote maker (Google Apps Script), no-API version.
  *
- * Lives inside the quotation workbook. Deployed as a Web App, it lets you:
- *   - type/paste a customer's order + rate on your phone -> preview the quote
- *   - confirm -> append rows to the QUOTATIONS tab and email you the PDF
- *     (exported from the "claude landscape" / "claude portrait" tabs)
- *   - re-print any earlier quote by its number (uses the "landscape"/"portrait"
- *     lookup tabs via cell H4)
+ * You fill a simple form (thickness, brand, size, sheets, rate); it prices the
+ * quote, appends rows to QUOTATIONS, and emails you the PDF from your formatted
+ * tabs. No API key, no external service, no per-quote cost.
  *
- * One-time setup is in apps_script/README.md.
+ *   - new quote  -> "claude landscape" / "claude portrait" tabs (latest quote)
+ *   - re-print   -> "landscape" / "portrait" tabs via cell H4
+ *
+ * Setup is in apps_script/README.md.
  */
 
-// ---- Settings (match the Python tool) --------------------------------------
+// ---- Settings ---------------------------------------------------------------
 var DATA_TAB = 'QUOTATIONS';
 var LATEST_LANDSCAPE_TAB = 'claude landscape';
 var LATEST_PORTRAIT_TAB = 'claude portrait';
@@ -22,10 +22,9 @@ var LANDSCAPE_MAX_ITEMS = 8;
 var RATE_EXTRA_PCT = 1.0;
 var DEFAULT_GST_PCT = 18.0;
 var TIMEZONE = 'Asia/Kolkata';
-var ANTHROPIC_MODEL = 'claude-opus-4-8';
 var FIRST_DATA_ROW = 2; // row 1 is the header on QUOTATIONS
 
-// Glass brand/type catalog (from the workbook's Brand list).
+// Glass brand/type catalog (for the brand dropdown).
 var BRANDS = [
   'asahi', 'asahi aqua blue reflective', 'asahi bronze mirror',
   'asahi bronze tinted', 'asahi coral green reflective',
@@ -48,95 +47,15 @@ var BRANDS = [
 
 // ---- Web app entry ----------------------------------------------------------
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
+  var t = HtmlService.createTemplateFromFile('Index');
+  t.brandsJson = JSON.stringify(BRANDS);
+  return t.evaluate()
     .setTitle('Rachna Quote')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-function getApiKey_() {
-  var k = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!k) {
-    throw new Error(
-      'ANTHROPIC_API_KEY is not set. Add it in Project Settings -> Script ' +
-      'Properties (see apps_script/README.md).'
-    );
-  }
-  return k;
-}
-
-// ---- Extraction (Claude) ----------------------------------------------------
-function extractItems_(orderText) {
-  var sys =
-    'You extract glass orders for a Bangalore glass wholesaler from short, ' +
-    'rough notes (Kannada/Hindi/English). Return ONLY JSON, no prose, shaped ' +
-    'exactly: {"customer":"", "items":[{"thickness_mm":0,"brand":"",' +
-    '"length_cm":0,"breadth_cm":0,"sheets":0,"notes":""}]}. Rules: thickness ' +
-    'in mm; length & breadth in CENTIMETRES (convert feet=30.48cm, inch=2.54cm ' +
-    'and note it); match brand to the SINGLE closest catalog entry (a real ' +
-    'glass product, never freight/damage/cutting/loading); sheets = sheet ' +
-    'count; never invent prices.';
-  var user =
-    'Glass catalog:\n' + BRANDS.join('\n') +
-    '\n\nCustomer order:\n' + orderText +
-    '\n\nReturn the JSON now.';
-
-  var body = {
-    model: ANTHROPIC_MODEL,
-    max_tokens: 2000,
-    system: sys,
-    messages: [{ role: 'user', content: user }]
-  };
-  var resp = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-api-key': getApiKey_(), 'anthropic-version': '2023-06-01' },
-    payload: JSON.stringify(body),
-    muteHttpExceptions: true
-  });
-  var raw = resp.getContentText();
-  if (resp.getResponseCode() >= 300) {
-    throw new Error('Anthropic API error: ' + raw);
-  }
-  var data = JSON.parse(raw);
-  var text = (data.content || [])
-    .filter(function (b) { return b.type === 'text'; })
-    .map(function (b) { return b.text; })
-    .join('');
-  return parseJsonLoose_(text);
-}
-
-function parseJsonLoose_(text) {
-  var start = text.indexOf('{');
-  var end = text.lastIndexOf('}');
-  if (start === -1 || end === -1) {
-    throw new Error('Could not read the order. Model said: ' + text);
-  }
-  return JSON.parse(text.substring(start, end + 1));
-}
-
-// ---- Rates ------------------------------------------------------------------
-function parseRatesString_(s) {
-  // Each line: "brand, thickness, rate[, gst]"  e.g. "sg, 4, 110"
-  var map = {};
-  if (!s) return map;
-  s.split(/\r?\n/).forEach(function (line) {
-    line = line.trim();
-    if (!line) return;
-    var parts = line.split(',').map(function (p) { return p.trim(); });
-    if (parts.length < 3) return;
-    var brand = parts[0].toLowerCase();
-    var thickness = parseFloat(parts[1]);
-    var rate = parseFloat(parts[2]);
-    var gst = parts.length > 3 && parts[3] !== '' ? parseFloat(parts[3]) : DEFAULT_GST_PCT;
-    if (brand && !isNaN(thickness) && !isNaN(rate)) {
-      map[brand + '|' + thickness] = { rate: rate, gst: gst };
-    }
-  });
-  return map;
-}
-
+// ---- Rates (optional "Rates" tab) ------------------------------------------
 function readRatesTab_() {
-  // Optional "Rates" tab: columns brand | thickness | rate | gst (with header).
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Rates');
   var map = {};
@@ -157,31 +76,24 @@ function readRatesTab_() {
 }
 
 // ---- Pricing (matches quote #1284) -----------------------------------------
-function priceLine_(item, rates) {
+function priceItem_(item, rate, gst) {
   var area = (item.length_cm / 100) * (item.breadth_cm / 100) * item.sheets;
-  var key = String(item.brand).toLowerCase() + '|' + item.thickness_mm;
-  var r = rates[key];
   var line = {
-    thickness_mm: item.thickness_mm,
-    brand: item.brand,
-    length_cm: item.length_cm,
-    breadth_cm: item.breadth_cm,
-    sheets: item.sheets,
-    notes: item.notes || '',
-    area_m2: round_(area, 4),
-    rate: null, gst: null,
-    taxable: 0, cgst: 0, sgst: 0, total: 0,
-    rate_missing: !r
+    thickness_mm: item.thickness_mm, brand: item.brand,
+    length_cm: item.length_cm, breadth_cm: item.breadth_cm, sheets: item.sheets,
+    notes: item.notes || '', area_m2: round_(area, 4),
+    rate: null, gst: null, taxable: 0, cgst: 0, sgst: 0, total: 0,
+    rate_missing: (rate === null || rate === undefined)
   };
-  if (r) {
-    var valueIncl = r.rate * (1 + RATE_EXTRA_PCT / 100) * item.thickness_mm * area;
-    line.rate = r.rate;
-    line.gst = r.gst;
+  if (rate !== null && rate !== undefined) {
+    var valueIncl = rate * (1 + RATE_EXTRA_PCT / 100) * item.thickness_mm * area;
+    line.rate = rate;
+    line.gst = gst;
     line.total = Math.round(valueIncl);
-    line.taxable = round_(valueIncl / (1 + r.gst / 100), 2);
-    var halfGst = round_(line.taxable * (r.gst / 100) / 2, 2);
-    line.cgst = halfGst;
-    line.sgst = halfGst;
+    line.taxable = round_(valueIncl / (1 + gst / 100), 2);
+    var half = round_(line.taxable * (gst / 100) / 2, 2);
+    line.cgst = half;
+    line.sgst = half;
   }
   return line;
 }
@@ -195,31 +107,54 @@ function todayStr_() {
   return Utilities.formatDate(new Date(), TIMEZONE, 'd-MMMM-yy');
 }
 
+function blankRow_(it) {
+  return !it.thickness && !it.brand && !it.length && !it.breadth && !it.sheets && !it.rate;
+}
+
 // ---- Server endpoints called from the page ---------------------------------
 
-/** Preview a quote without writing anything. */
-function previewQuote(form) {
-  var extraction = extractItems_(form.order || '');
-  var customer = (form.customer || extraction.customer || '').trim();
+/** Preview a quote from the form, without writing anything. */
+function previewQuote(payload) {
   var rates = readRatesTab_();
-  var formRates = parseRatesString_(form.rates || '');
-  for (var k in formRates) rates[k] = formRates[k];
-
-  var lines = (extraction.items || []).map(function (it) {
-    return priceLine_(it, rates);
+  var lines = [];
+  (payload.items || []).forEach(function (it, idx) {
+    if (blankRow_(it)) return;
+    var thickness = parseFloat(it.thickness);
+    var length = parseFloat(it.length);
+    var breadth = parseFloat(it.breadth);
+    var sheets = parseInt(it.sheets, 10);
+    var brand = (it.brand || '').trim();
+    if (!brand || isNaN(thickness) || isNaN(length) || isNaN(breadth) || isNaN(sheets)) {
+      throw new Error('Item ' + (idx + 1) +
+        ' is incomplete — fill thickness, brand, length, breadth and sheets.');
+    }
+    var rate = (it.rate !== '' && it.rate != null && !isNaN(parseFloat(it.rate)))
+      ? parseFloat(it.rate) : null;
+    var gst = (it.gst !== '' && it.gst != null && !isNaN(parseFloat(it.gst)))
+      ? parseFloat(it.gst) : DEFAULT_GST_PCT;
+    if (rate === null) {
+      var r = rates[brand.toLowerCase() + '|' + thickness];
+      if (r) { rate = r.rate; gst = r.gst; }
+    }
+    lines.push(priceItem_({
+      thickness_mm: thickness, brand: brand,
+      length_cm: length, breadth_cm: breadth, sheets: sheets, notes: ''
+    }, rate, gst));
   });
+
+  if (!lines.length) throw new Error('Add at least one item.');
+
   var missing = lines.filter(function (l) { return l.rate_missing; }).map(function (l) {
     return l.brand + ' ' + l.thickness_mm + 'mm';
   });
-
   var taxable = 0, cgst = 0, sgst = 0, total = 0;
   lines.forEach(function (l) {
     taxable += l.taxable; cgst += l.cgst; sgst += l.sgst; total += l.total;
   });
 
   return {
-    ok: lines.length > 0 && missing.length === 0,
-    customer: customer,
+    ok: missing.length === 0,
+    customer: (payload.customer || '').trim(),
     date: todayStr_(),
     lines: lines,
     missing: missing,
@@ -249,7 +184,7 @@ function commitQuote(quote) {
       l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate
     ]);
   });
-  SpreadsheetApp.flush(); // make sure the "claude" tabs recalc before export
+  SpreadsheetApp.flush();
 
   var portrait = quote.lines.length > LANDSCAPE_MAX_ITEMS;
   var tab = portrait ? LATEST_PORTRAIT_TAB : LATEST_LANDSCAPE_TAB;
@@ -307,7 +242,6 @@ function summariseQuote_(dataSheet, quoteNumber) {
   var last = dataSheet.getLastRow();
   var out = { count: 0, customer: '', date: '' };
   if (last < FIRST_DATA_ROW) return out;
-  // Read B:D (date, quote#, customer).
   var rows = dataSheet.getRange(FIRST_DATA_ROW, 2, last - FIRST_DATA_ROW + 1, 3).getValues();
   rows.forEach(function (r) {
     if (parseInt(r[1], 10) === quoteNumber) {
@@ -341,7 +275,6 @@ function exportTabPdf_(tabName, portrait, fileName) {
 }
 
 function deliver_(blob, quoteNumber, customer) {
-  // Save to a "Rachna Quotes" Drive folder and email it to you.
   var folders = DriveApp.getFoldersByName('Rachna Quotes');
   var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('Rachna Quotes');
   var file = folder.createFile(blob);
@@ -349,7 +282,7 @@ function deliver_(blob, quoteNumber, customer) {
   if (email) {
     MailApp.sendEmail({
       to: email,
-      subject: 'Quotation #' + quoteNumber + (customer ? ' — ' + customer : ''),
+      subject: 'Quotation #' + quoteNumber + (customer ? ' - ' + customer : ''),
       body: 'Your quotation PDF is attached.\nAlso saved in Drive: ' + file.getUrl(),
       attachments: [blob]
     });
