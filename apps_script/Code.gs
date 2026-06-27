@@ -252,19 +252,30 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   }
 }
 
-/** Last real quote line: column C (quote#) and E (thickness) are both numbers.
- *  Skips any summary/blank rows that sit below the ledger. 0 if none. */
+/** Bottom of the CONTIGUOUS quote ledger. Scans DOWN from the first data row
+ *  and follows the unbroken run of real quote rows (column C holds a quote
+ *  number). The moment a real break appears — the big empty gap below your last
+ *  quote — it stops, so new rows insert directly after your latest quote and
+ *  NOT among the leftover/pivot/summary content that sits lower in the sheet.
+ *  A lone stray blank inside the ledger is tolerated; two+ in a row end it.
+ *  Works no matter where your last quote is (row 776, etc.). 0 if none. */
 function lastLedgerRow_(data) {
   var last = data.getLastRow();
   if (last < FIRST_DATA_ROW) return 0;
-  var c = data.getRange(1, 3, last, 1).getValues();
-  var e = data.getRange(1, 5, last, 1).getValues();
-  for (var r = last; r >= FIRST_DATA_ROW; r--) {
-    var cn = parseFloat(c[r - 1][0]);
-    var en = parseFloat(e[r - 1][0]);
-    if (!isNaN(cn) && cn > 0 && !isNaN(en)) return r;
+  var c = data.getRange(FIRST_DATA_ROW, 3, last - FIRST_DATA_ROW + 1, 1).getValues();
+  var bottom = 0;   // last confirmed quote row
+  var gap = 0;      // consecutive non-quote rows seen since the last quote row
+  for (var i = 0; i < c.length; i++) {
+    var cn = parseFloat(c[i][0]);
+    if (!isNaN(cn) && cn > 0) {
+      bottom = FIRST_DATA_ROW + i;
+      gap = 0;
+    } else if (bottom > 0) {
+      gap++;
+      if (gap >= 2) break; // real gap: the contiguous ledger has ended
+    }
   }
-  return 0;
+  return bottom;
 }
 
 /** Re-print an existing quote by number using the lookup tabs (cell H4). */
@@ -282,15 +293,15 @@ function reprintQuote(quoteNumber) {
 
 // ---- Helpers ----------------------------------------------------------------
 function nextQuoteNumber_(dataSheet) {
-  var last = dataSheet.getLastRow();
-  if (last < FIRST_DATA_ROW) return 1285;
-  var col = dataSheet.getRange(FIRST_DATA_ROW, 3, last - FIRST_DATA_ROW + 1, 1).getValues();
-  var max = 0;
-  col.forEach(function (r) {
-    var n = parseInt(r[0], 10);
-    if (!isNaN(n) && n > max) max = n;
-  });
-  return max ? max + 1 : 1285;
+  // Take the number from the bottom of the contiguous ledger (your latest
+  // quote) and add 1 — so a new quote right below 1291 becomes 1292, ignoring
+  // any stale/higher numbers that may linger in content below the ledger.
+  var bottom = lastLedgerRow_(dataSheet);
+  if (bottom >= FIRST_DATA_ROW) {
+    var n = parseInt(dataSheet.getRange(bottom, 3).getValue(), 10);
+    if (!isNaN(n) && n > 0) return n + 1;
+  }
+  return 1285;
 }
 
 function summariseQuote_(dataSheet, quoteNumber) {
@@ -441,8 +452,12 @@ function diagnose() {
   var c = data.getRange(1, 3, last, 1).getValues();
   var d = data.getRange(1, 4, last, 1).getValues();
   var e = data.getRange(1, 5, last, 1).getValues();
-  var out = ['DATA_TAB=' + DATA_TAB, 'getLastRow=' + last, 'lastLedgerRow=' + lastLedger,
-             'next insert would go to row ' + (lastLedger + 1), '--- newest 12 rows with a quote# ---'];
+  var out = ['DATA_TAB=' + DATA_TAB, 'getLastRow=' + last,
+             'lastLedgerRow (contiguous ledger bottom)=' + lastLedger,
+             'quote# at that row=' + (lastLedger ? data.getRange(lastLedger, 3).getValue() : '-'),
+             'next quote number=' + nextQuoteNumber_(data),
+             'next insert would go to row ' + (lastLedger + 1),
+             '--- newest 12 rows with a quote# ---'];
   var shown = 0;
   for (var r = last; r >= FIRST_DATA_ROW && shown < 12; r--) {
     var n = parseInt(c[r - 1][0], 10);
