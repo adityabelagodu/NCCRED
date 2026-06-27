@@ -64,6 +64,7 @@
   function brandOptions() {
     var s = '<option value="">— choose —</option>';
     BRANDS.forEach(function (b) { s += '<option value="' + b + '">' + b + '</option>'; });
+    s += '<option value="__other__">✎ type my own…</option>';
     return s;
   }
 
@@ -71,26 +72,47 @@
     itemCount++;
     var div = document.createElement('div');
     div.className = 'item';
+    // Field order: Thickness, Brand, Length, Breadth, Sheets, Rate, Description.
     div.innerHTML =
       '<div class="head"><b>Item ' + itemCount + '</b>' +
       '<button class="rm" onclick="this.parentNode.parentNode.remove()">remove</button></div>' +
-      '<label>Brand / type</label><select class="it-brand">' + brandOptions() + '</select>' +
-      '<div class="grid2">' +
-      '<div><label>Thickness (mm)</label><input class="it-thk" inputmode="decimal" placeholder="4"></div>' +
-      '<div><label>No. of sheets</label><input class="it-sheets" inputmode="numeric" placeholder="25"></div>' +
-      '<div><label>Length (cm)</label><input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)"></div>' +
-      '<div><label>Breadth (cm)</label><input class="it-brd" inputmode="decimal" placeholder="138" onchange="checkStock(this)"></div>' +
-      '</div>' +
-      '<label>Rate per mm (incl. GST)</label><input class="it-rate" inputmode="decimal" placeholder="110">' +
+      '<label>Thickness (mm)</label>' +
+      '<input class="it-thk" inputmode="decimal" placeholder="4" onchange="checkStock(this)">' +
+      '<label>Brand / type</label>' +
+      '<select class="it-brand" onchange="onBrandChange(this)">' + brandOptions() + '</select>' +
+      '<input class="it-brand-other" placeholder="type the brand / type" style="display:none;margin-top:6px;" onchange="checkStock(this)">' +
+      '<label>Length (cm)</label>' +
+      '<input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)">' +
+      '<label>Breadth (cm)</label>' +
+      '<input class="it-brd" inputmode="decimal" placeholder="138" onchange="checkStock(this)">' +
+      '<label>No. of sheets</label>' +
+      '<input class="it-sheets" inputmode="numeric" placeholder="25">' +
+      '<label>Rate per mm (incl. GST)</label>' +
+      '<input class="it-rate" inputmode="decimal" placeholder="110">' +
+      '<label>Additional description (optional)</label>' +
+      '<input class="it-desc" placeholder="e.g. cut to size, polished edges">' +
       '<div class="stock muted" style="margin-top:8px;"></div>';
-    div.querySelector('.it-brand').setAttribute('onchange', 'checkStock(this)');
-    div.querySelector('.it-thk').setAttribute('onchange', 'checkStock(this)');
     document.getElementById('items').appendChild(div);
+  }
+
+  // Brand value: the dropdown choice, or the typed text if "type my own".
+  function brandOf(el) {
+    var sel = el.querySelector('.it-brand').value;
+    if (sel === '__other__') return el.querySelector('.it-brand-other').value.trim();
+    return sel;
+  }
+
+  function onBrandChange(node) {
+    var el = node.closest('.item');
+    var other = el.querySelector('.it-brand-other');
+    if (node.value === '__other__') { other.style.display = 'block'; other.focus(); }
+    else { other.style.display = 'none'; }
+    checkStock(node);
   }
 
   function checkStock(node) {
     var el = node.closest('.item');
-    var brand = el.querySelector('.it-brand').value;
+    var brand = brandOf(el);
     var thk = el.querySelector('.it-thk').value.trim();
     var len = el.querySelector('.it-len').value.trim();
     var brd = el.querySelector('.it-brd').value.trim();
@@ -115,11 +137,12 @@
     document.querySelectorAll('.item').forEach(function (el) {
       out.push({
         thickness: el.querySelector('.it-thk').value.trim(),
-        brand: el.querySelector('.it-brand').value,
+        brand: brandOf(el),
         length: el.querySelector('.it-len').value.trim(),
         breadth: el.querySelector('.it-brd').value.trim(),
         sheets: el.querySelector('.it-sheets').value.trim(),
-        rate: el.querySelector('.it-rate').value.trim()
+        rate: el.querySelector('.it-rate').value.trim(),
+        description: el.querySelector('.it-desc').value.trim()
       });
     });
     return out;
@@ -148,7 +171,8 @@
     setBusy('status', '');
     var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> &middot; ' + q.date;
     q.lines.forEach(function (l, i) {
-      html += '<div class="row"><span>' + (i + 1) + '. ' + l.thickness_mm + 'mm ' + l.brand +
+      var name = l.thickness_mm + 'mm ' + l.brand + (l.description ? ' (' + l.description + ')' : '');
+      html += '<div class="row"><span>' + (i + 1) + '. ' + name +
               ' &middot; ' + l.length_cm + 'x' + l.breadth_cm + 'cm &middot; ' + l.sheets + ' sheets</span><span>' +
               (l.rate_missing ? '<span class="err">no rate</span>' : '&#8377;' + money(l.total)) + '</span></div>';
     });

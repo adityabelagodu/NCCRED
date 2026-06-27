@@ -81,7 +81,7 @@ function priceItem_(item, rate, gst) {
   var line = {
     thickness_mm: item.thickness_mm, brand: item.brand,
     length_cm: item.length_cm, breadth_cm: item.breadth_cm, sheets: item.sheets,
-    notes: item.notes || '', area_m2: round_(area, 4),
+    description: item.description || '', area_m2: round_(area, 4),
     rate: null, gst: null, taxable: 0, cgst: 0, sgst: 0, total: 0,
     rate_missing: (rate === null || rate === undefined)
   };
@@ -138,7 +138,8 @@ function previewQuote(payload) {
     }
     lines.push(priceItem_({
       thickness_mm: thickness, brand: brand,
-      length_cm: length, breadth_cm: breadth, sheets: sheets, notes: ''
+      length_cm: length, breadth_cm: breadth, sheets: sheets,
+      description: (it.description || '').trim()
     }, rate, gst));
   });
 
@@ -183,24 +184,34 @@ function commitQuote(quote) {
   lock.waitLock(30000);
   try {
     var nCols = Math.max(26, data.getLastColumn());
-    // Last row that actually holds a quote (column C = quote#).
-    var lastQuoteRow = lastRowInColumn_(data, 3);
-    var tmplRow = (lastQuoteRow >= FIRST_DATA_ROW) ? lastQuoteRow : null;
-    var insertAfter = (lastQuoteRow >= FIRST_DATA_ROW) ? lastQuoteRow : (FIRST_DATA_ROW - 1);
+    var lastLedger = lastLedgerRow_(data);
+    if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
+
+    // Formulas from a real quote row. Array-formula cells (incl. column A — the
+    // Vlookup key — and the calc columns) read back as '' here and fill
+    // themselves; we must NOT write those. Per-row fill-down formulas read back
+    // real and must be recreated on the new row.
+    var tmplFormulas = (lastLedger >= FIRST_DATA_ROW)
+      ? data.getRange(lastLedger, 1, 1, nCols).getFormulasR1C1()[0]
+      : null;
 
     quote.lines.forEach(function (l, idx) {
-      var target = insertAfter + 1 + idx;
-      data.insertRowAfter(insertAfter + idx);
-      // Copy a real quote row so column A (Vlookup key) and the calc columns
-      // K..AD keep their formulas for this new row.
-      if (tmplRow) {
-        data.getRange(tmplRow, 1, 1, nCols).copyTo(data.getRange(target, 1, 1, nCols));
+      var target = lastLedger + 1 + idx;
+      data.insertRowAfter(lastLedger + idx);
+
+      if (tmplFormulas) {
+        for (var col = 1; col <= nCols; col++) {
+          if (col >= 2 && col <= 10) continue;       // B..J are inputs (below)
+          var f = tmplFormulas[col - 1];
+          if (f) data.getRange(target, col).setFormulaR1C1(f);
+        }
       }
-      // Overwrite ONLY the input columns B..J (date, quote#, customer, thickness,
-      // brand, length, breadth, sheets, rate). Column A and K..AD stay as formulas.
+      // Brand cell (F) carries the description too, only when one was entered.
+      var brandCell = l.brand + (l.description ? ' - ' + l.description : '');
+      // Inputs only: B..J. NEVER write column A (the sheet builds its key there).
       data.getRange(target, 2, 1, 9).setValues([[
         quote.date, quoteNumber, quote.customer,
-        l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate
+        l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate
       ]]);
     });
     SpreadsheetApp.flush();
@@ -236,13 +247,17 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   }
 }
 
-/** Last row (>= header) whose given column has a value; 0 if none. */
-function lastRowInColumn_(sheet, col) {
-  var last = sheet.getLastRow();
-  if (last < 1) return 0;
-  var vals = sheet.getRange(1, col, last, 1).getValues();
-  for (var r = vals.length; r >= 1; r--) {
-    if (vals[r - 1][0] !== '' && vals[r - 1][0] != null) return r;
+/** Last real quote line: column C (quote#) and E (thickness) are both numbers.
+ *  Skips any summary/blank rows that sit below the ledger. 0 if none. */
+function lastLedgerRow_(data) {
+  var last = data.getLastRow();
+  if (last < FIRST_DATA_ROW) return 0;
+  var c = data.getRange(1, 3, last, 1).getValues();
+  var e = data.getRange(1, 5, last, 1).getValues();
+  for (var r = last; r >= FIRST_DATA_ROW; r--) {
+    var cn = parseFloat(c[r - 1][0]);
+    var en = parseFloat(e[r - 1][0]);
+    if (!isNaN(cn) && cn > 0 && !isNaN(en)) return r;
   }
   return 0;
 }
