@@ -165,7 +165,7 @@ function previewQuote(payload) {
   };
 }
 
-/** Commit a previewed quote: append rows + export & email the PDF. */
+/** Commit a previewed quote: insert rows (with the sheet's formulas) + PDF. */
 function commitQuote(quote) {
   if (!quote || !quote.lines || !quote.lines.length) {
     throw new Error('Nothing to commit.');
@@ -178,13 +178,35 @@ function commitQuote(quote) {
   if (!data) throw new Error('Tab "' + DATA_TAB + '" not found.');
 
   var quoteNumber = nextQuoteNumber_(data);
-  quote.lines.forEach(function (l) {
-    data.appendRow([
-      '', quote.date, quoteNumber, quote.customer,
-      l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate
-    ]);
-  });
-  SpreadsheetApp.flush();
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var nCols = Math.max(26, data.getLastColumn());
+    // Last row that actually holds a quote (column C = quote#).
+    var lastQuoteRow = lastRowInColumn_(data, 3);
+    var tmplRow = (lastQuoteRow >= FIRST_DATA_ROW) ? lastQuoteRow : null;
+    var insertAfter = (lastQuoteRow >= FIRST_DATA_ROW) ? lastQuoteRow : (FIRST_DATA_ROW - 1);
+
+    quote.lines.forEach(function (l, idx) {
+      var target = insertAfter + 1 + idx;
+      data.insertRowAfter(insertAfter + idx);
+      // Copy a real quote row so column A (Vlookup key) and the calc columns
+      // K..AD keep their formulas for this new row.
+      if (tmplRow) {
+        data.getRange(tmplRow, 1, 1, nCols).copyTo(data.getRange(target, 1, 1, nCols));
+      }
+      // Overwrite ONLY the input columns B..J (date, quote#, customer, thickness,
+      // brand, length, breadth, sheets, rate). Column A and K..AD stay as formulas.
+      data.getRange(target, 2, 1, 9).setValues([[
+        quote.date, quoteNumber, quote.customer,
+        l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate
+      ]]);
+    });
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
 
   var portrait = quote.lines.length > LANDSCAPE_MAX_ITEMS;
   var tab = portrait ? LATEST_PORTRAIT_TAB : LATEST_LANDSCAPE_TAB;
@@ -193,6 +215,17 @@ function commitQuote(quote) {
   var link = deliver_(blob, quoteNumber, quote.customer);
 
   return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
+}
+
+/** Last row (>= header) whose given column has a value; 0 if none. */
+function lastRowInColumn_(sheet, col) {
+  var last = sheet.getLastRow();
+  if (last < 1) return 0;
+  var vals = sheet.getRange(1, col, last, 1).getValues();
+  for (var r = vals.length; r >= 1; r--) {
+    if (vals[r - 1][0] !== '' && vals[r - 1][0] != null) return r;
+  }
+  return 0;
 }
 
 /** Re-print an existing quote by number using the lookup tabs (cell H4). */
@@ -262,8 +295,11 @@ function exportTabPdf_(tabName, portrait, fileName) {
     'format=pdf' +
     '&gid=' + gid +
     '&portrait=' + (portrait ? 'true' : 'false') +
-    '&size=A4&fitw=true&gridlines=false&printtitle=false&sheetnames=false' +
-    '&horizontal_alignment=CENTER';
+    '&size=A4' +
+    '&scale=4' + // 4 = fit to page, so the whole quote is one page
+    '&gridlines=false&printtitle=false&sheetnames=false&pagenumbers=false' +
+    '&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25' +
+    '&horizontal_alignment=CENTER&vertical_alignment=TOP';
   var resp = UrlFetchApp.fetch(url, {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
     muteHttpExceptions: true
