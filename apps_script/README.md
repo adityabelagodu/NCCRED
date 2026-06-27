@@ -34,9 +34,11 @@ the quote and PDF. Do these steps once on a Windows/Mac computer in Chrome.
 
 ## Using it on your phone
 - **New quote:** type the customer name. For each glass item pick the **brand**
-  from the dropdown and type **thickness, sheets, length, breadth, rate**. Tap
-  **+ Add item** for more items. Tap **Preview**, check it, then **Confirm &
-  save + PDF**. It's added to `QUOTATIONS` and the PDF is emailed to you and
+  from the dropdown and type **thickness, sheets, length, breadth, rate**. As
+  soon as an item's brand + thickness + length + breadth are filled, the **stock
+  shows below it — J, JP and O** (columns U/W/Y of the sheet) for that exact
+  item. Tap **+ Add item** for more items. Tap **Preview**, check it, then
+  **Confirm & save + PDF**. It's added to `QUOTATIONS` and the PDF is emailed to you and
   saved to a Drive folder "Rachna Quotes". Landscape for ≤ 8 items, portrait for
   more.
 - **Re-print an old quote:** type its number under "Re-print an old quote" → **Get PDF**.

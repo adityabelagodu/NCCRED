@@ -78,12 +78,37 @@
       '<div class="grid2">' +
       '<div><label>Thickness (mm)</label><input class="it-thk" inputmode="decimal" placeholder="4"></div>' +
       '<div><label>No. of sheets</label><input class="it-sheets" inputmode="numeric" placeholder="25"></div>' +
-      '<div><label>Length (cm)</label><input class="it-len" inputmode="decimal" placeholder="244"></div>' +
-      '<div><label>Breadth (cm)</label><input class="it-brd" inputmode="decimal" placeholder="138"></div>' +
+      '<div><label>Length (cm)</label><input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)"></div>' +
+      '<div><label>Breadth (cm)</label><input class="it-brd" inputmode="decimal" placeholder="138" onchange="checkStock(this)"></div>' +
       '</div>' +
-      '<label>Rate per mm (incl. GST)</label><input class="it-rate" inputmode="decimal" placeholder="110">';
+      '<label>Rate per mm (incl. GST)</label><input class="it-rate" inputmode="decimal" placeholder="110">' +
+      '<div class="stock muted" style="margin-top:8px;"></div>';
+    div.querySelector('.it-brand').setAttribute('onchange', 'checkStock(this)');
+    div.querySelector('.it-thk').setAttribute('onchange', 'checkStock(this)');
     document.getElementById('items').appendChild(div);
   }
+
+  function checkStock(node) {
+    var el = node.closest('.item');
+    var brand = el.querySelector('.it-brand').value;
+    var thk = el.querySelector('.it-thk').value.trim();
+    var len = el.querySelector('.it-len').value.trim();
+    var brd = el.querySelector('.it-brd').value.trim();
+    var box = el.querySelector('.stock');
+    if (!brand || !thk || !len || !brd) { box.innerHTML = ''; return; }
+    box.innerHTML = 'checking stock…';
+    google.script.run
+      .withSuccessHandler(function (s) {
+        if (!s) { box.innerHTML = ''; return; }
+        if (s.unavailable) { box.innerHTML = '<span class="muted">stock not available</span>'; return; }
+        box.innerHTML = 'Stock &mdash; J: <b>' + stk(s.j) + '</b> &nbsp; JP: <b>' + stk(s.jp) +
+                        '</b> &nbsp; O: <b>' + stk(s.o) + '</b>';
+      })
+      .withFailureHandler(function (e) { box.innerHTML = '<span class="err">stock: ' + e.message + '</span>'; })
+      .lookupStock({ thickness: thk, brand: brand, length: len, breadth: brd });
+  }
+
+  function stk(v) { return (v === '' || v == null) ? '-' : v; }
 
   function collectItems() {
     var out = [];

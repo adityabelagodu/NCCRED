@@ -293,3 +293,79 @@ function deliver_(blob, quoteNumber, customer) {
 function safeName_(s) {
   return String(s || 'customer').replace(/[^a-zA-Z0-9-_]+/g, '_').replace(/^_|_$/g, '') || 'customer';
 }
+
+// ---- Live stock lookup ------------------------------------------------------
+// Shows J / JP / O stock (columns U / W / Y) for the item being entered, using
+// the QUOTATIONS sheet's own per-row stock formulas. Runs them on a hidden
+// helper sheet so your real quote rows are never touched.
+
+var STOCK_HELPER = '_stock_helper';
+var STOCK_COL_J = 21;   // U  - J stock pieces
+var STOCK_COL_JP = 23;  // W  - JP stock pieces
+var STOCK_COL_O = 25;   // Y  - O stock pieces
+
+/** Called from the page as each item's brand+thickness+size are filled in. */
+function lookupStock(item) {
+  var thickness = parseFloat(item.thickness);
+  var length = parseFloat(item.length);
+  var breadth = parseFloat(item.breadth);
+  var brand = (item.brand || '').trim();
+  if (!brand || isNaN(thickness) || isNaN(length) || isNaN(breadth)) {
+    return null; // not enough entered yet
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var src = ss.getSheetByName(DATA_TAB);
+    if (!src) return { unavailable: true };
+    var nCols = Math.max(26, src.getLastColumn());
+
+    var tmplRow = findStockFormulaRow_(src);
+    if (!tmplRow) return { unavailable: true };
+
+    var helper = getStockHelper_(ss, src, tmplRow, nCols);
+    // Feed the item into E:H (Thickness, Brand, Length, Breadth).
+    helper.getRange(2, 5, 1, 4).setValues([[thickness, brand, length, breadth]]);
+    SpreadsheetApp.flush();
+
+    return {
+      j: toNum_(helper.getRange(2, STOCK_COL_J).getValue()),
+      jp: toNum_(helper.getRange(2, STOCK_COL_JP).getValue()),
+      o: toNum_(helper.getRange(2, STOCK_COL_O).getValue())
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Find a recent QUOTATIONS row whose U/W/Y actually hold formulas to clone. */
+function findStockFormulaRow_(src) {
+  var last = src.getLastRow();
+  if (last < FIRST_DATA_ROW) return null;
+  var start = Math.max(FIRST_DATA_ROW, last - 120);
+  var n = last - start + 1;
+  var f = src.getRange(start, STOCK_COL_J, n, 5).getFormulas(); // U..Y
+  for (var i = n - 1; i >= 0; i--) {
+    if (f[i][0] || f[i][2] || f[i][4]) return start + i; // U, W, Y
+  }
+  return null;
+}
+
+/** Hidden helper sheet holding one row that mirrors a QUOTATIONS row's formulas. */
+function getStockHelper_(ss, src, tmplRow, nCols) {
+  var helper = ss.getSheetByName(STOCK_HELPER);
+  if (!helper) helper = ss.insertSheet(STOCK_HELPER);
+  var formulas = src.getRange(tmplRow, 1, 1, nCols).getFormulasR1C1();
+  helper.getRange(2, 1, 1, nCols).setFormulasR1C1(formulas);
+  try { helper.hideSheet(); } catch (e) { /* already hidden */ }
+  return helper;
+}
+
+function toNum_(v) {
+  if (v === '' || v == null) return 0;
+  if (typeof v === 'string' && v.charAt(0) === '#') return 0; // #N/A etc.
+  var n = Number(v);
+  return isNaN(n) ? v : n;
+}
