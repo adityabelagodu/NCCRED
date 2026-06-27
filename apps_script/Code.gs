@@ -427,3 +427,31 @@ function toNum_(v) {
   var n = Number(v);
   return isNaN(n) ? v : n;
 }
+
+/**
+ * One-off diagnostic: run this from the editor (pick "diagnose" in the function
+ * dropdown, click Run) and read the Execution log. It shows where the most
+ * recent quote rows physically are in the QUOTATIONS tab.
+ */
+function diagnose() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  var last = data.getLastRow();
+  var lastLedger = lastLedgerRow_(data);
+  var c = data.getRange(1, 3, last, 1).getValues();
+  var d = data.getRange(1, 4, last, 1).getValues();
+  var e = data.getRange(1, 5, last, 1).getValues();
+  var out = ['DATA_TAB=' + DATA_TAB, 'getLastRow=' + last, 'lastLedgerRow=' + lastLedger,
+             'next insert would go to row ' + (lastLedger + 1), '--- newest 12 rows with a quote# ---'];
+  var shown = 0;
+  for (var r = last; r >= FIRST_DATA_ROW && shown < 12; r--) {
+    var n = parseInt(c[r - 1][0], 10);
+    if (!isNaN(n) && n > 0) {
+      out.push('row ' + r + ':  quote#=' + c[r - 1][0] +
+               '  customer=' + (d[r - 1][0] || '') + '  thickness=' + (e[r - 1][0] || ''));
+      shown++;
+    }
+  }
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
