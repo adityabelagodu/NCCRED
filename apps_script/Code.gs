@@ -208,13 +208,32 @@ function commitQuote(quote) {
     lock.releaseLock();
   }
 
-  var portrait = quote.lines.length > LANDSCAPE_MAX_ITEMS;
-  var tab = portrait ? LATEST_PORTRAIT_TAB : LATEST_LANDSCAPE_TAB;
-  var fileName = 'Quote_' + quoteNumber + '_' + safeName_(quote.customer) + '.pdf';
-  var blob = exportTabPdf_(tab, portrait, fileName);
-  var link = deliver_(blob, quoteNumber, quote.customer);
+  // Use the working "landscape"/"portrait" tabs (fetch-by-number via H4) — the
+  // same display you already use, which shows the line items correctly.
+  return exportQuoteByNumber_(quoteNumber, quote.lines.length, quote.customer);
+}
 
-  return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
+/** Set the quote number into a lookup tab's H4, export it, then restore H4. */
+function exportQuoteByNumber_(quoteNumber, count, customer) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var portrait = count > LANDSCAPE_MAX_ITEMS;
+  var tabName = portrait ? LOOKUP_PORTRAIT_TAB : LOOKUP_LANDSCAPE_TAB;
+  var tab = ss.getSheetByName(tabName);
+  if (!tab) throw new Error('Tab "' + tabName + '" not found.');
+
+  var cell = tab.getRange(QUOTE_INPUT_CELL);
+  var previous = cell.getValue();
+  cell.setValue(quoteNumber);
+  SpreadsheetApp.flush();
+  try {
+    var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
+    var blob = exportTabPdf_(tabName, portrait, fileName);
+    var link = deliver_(blob, quoteNumber, customer);
+    return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
+  } finally {
+    cell.setValue(previous === '' ? '' : previous);
+    SpreadsheetApp.flush();
+  }
 }
 
 /** Last row (>= header) whose given column has a value; 0 if none. */
@@ -238,24 +257,7 @@ function reprintQuote(quoteNumber) {
   if (summary.count === 0) {
     throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
   }
-  var portrait = summary.count > LANDSCAPE_MAX_ITEMS;
-  var tabName = portrait ? LOOKUP_PORTRAIT_TAB : LOOKUP_LANDSCAPE_TAB;
-  var tab = ss.getSheetByName(tabName);
-  if (!tab) throw new Error('Tab "' + tabName + '" not found.');
-
-  var cell = tab.getRange(QUOTE_INPUT_CELL);
-  var previous = cell.getValue();
-  cell.setValue(quoteNumber);
-  SpreadsheetApp.flush();
-  try {
-    var fileName = 'Quote_' + quoteNumber + '_' + safeName_(summary.customer) + '.pdf';
-    var blob = exportTabPdf_(tabName, portrait, fileName);
-    var link = deliver_(blob, quoteNumber, summary.customer);
-    return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
-  } finally {
-    cell.setValue(previous === '' ? '' : previous);
-    SpreadsheetApp.flush();
-  }
+  return exportQuoteByNumber_(quoteNumber, summary.count, summary.customer);
 }
 
 // ---- Helpers ----------------------------------------------------------------
