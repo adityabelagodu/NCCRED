@@ -236,6 +236,11 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   var previous = cell.getValue();
   cell.setValue(quoteNumber);
   SpreadsheetApp.flush();
+  // The PDF export endpoint can serve a copy of the sheet from a moment ago, so
+  // wait for the new quote number in H4 to fully settle before exporting —
+  // otherwise it captures whatever quote was shown before.
+  Utilities.sleep(6000);
+  SpreadsheetApp.flush();
   try {
     var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
     var blob = exportTabPdf_(tabName, portrait, fileName);
