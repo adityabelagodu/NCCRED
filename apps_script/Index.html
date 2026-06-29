@@ -42,6 +42,10 @@
   <label>Customer name</label>
   <input id="customer" placeholder="e.g. Mithul Fab">
 
+  <label style="display:flex;align-items:center;gap:10px;font-weight:600;margin-top:14px;">
+    <input type="checkbox" id="noHandling" style="width:auto;"> Remove handling charges (1%)
+  </label>
+
   <div id="items"></div>
   <button class="secondary small" onclick="addItem()">+ Add item</button>
 
@@ -68,27 +72,45 @@
     return s;
   }
 
+  // A loading / transport line is priced by m² × rate, not by glass dimensions.
+  function isChargeBrand(b) {
+    b = (b || '').toLowerCase();
+    return b === 'loading' || b === 'transport' || b === 'transportation' ||
+           b.indexOf('loading') >= 0 || b.indexOf('transport') >= 0;
+  }
+
   function addItem() {
     itemCount++;
     var div = document.createElement('div');
     div.className = 'item';
     // Field order: Thickness, Brand, Length, Breadth, Sheets, Rate, Description.
+    // Glass fields and the charge (m²/rate) fields swap based on the brand.
     div.innerHTML =
       '<div class="head"><b>Item ' + itemCount + '</b>' +
       '<button class="rm" onclick="this.parentNode.parentNode.remove()">remove</button></div>' +
-      '<label>Thickness (mm)</label>' +
-      '<input class="it-thk" inputmode="decimal" placeholder="4" onchange="checkStock(this)">' +
+      '<div class="glass-fields">' +
+        '<label>Thickness (mm)</label>' +
+        '<input class="it-thk" inputmode="decimal" placeholder="4" onchange="checkStock(this)">' +
+      '</div>' +
       '<label>Brand / type</label>' +
       '<select class="it-brand" onchange="onBrandChange(this)">' + brandOptions() + '</select>' +
-      '<input class="it-brand-other" placeholder="type the brand / type" style="display:none;margin-top:6px;" onchange="checkStock(this)">' +
-      '<label>Length (cm)</label>' +
-      '<input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)">' +
-      '<label>Breadth (cm)</label>' +
-      '<input class="it-brd" inputmode="decimal" placeholder="138" onchange="checkStock(this)">' +
-      '<label>No. of sheets</label>' +
-      '<input class="it-sheets" inputmode="numeric" placeholder="25">' +
-      '<label>Rate per mm (incl. GST)</label>' +
-      '<input class="it-rate" inputmode="decimal" placeholder="110">' +
+      '<input class="it-brand-other" placeholder="type the brand / type" style="display:none;margin-top:6px;" onchange="onOtherBrand(this)">' +
+      '<div class="glass-fields">' +
+        '<label>Length (cm)</label>' +
+        '<input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)">' +
+        '<label>Breadth (cm)</label>' +
+        '<input class="it-brd" inputmode="decimal" placeholder="138" onchange="checkStock(this)">' +
+        '<label>No. of sheets</label>' +
+        '<input class="it-sheets" inputmode="numeric" placeholder="25">' +
+        '<label>Rate per mm (incl. GST)</label>' +
+        '<input class="it-rate" inputmode="decimal" placeholder="110">' +
+      '</div>' +
+      '<div class="charge-fields" style="display:none;">' +
+        '<label>m² (area)</label>' +
+        '<input class="it-m2" inputmode="decimal" placeholder="10.5">' +
+        '<label>Rate per m² (pretax)</label>' +
+        '<input class="it-ratem2" inputmode="decimal" placeholder="700">' +
+      '</div>' +
       '<label>Additional description (optional)</label>' +
       '<input class="it-desc" placeholder="e.g. cut to size, polished edges">' +
       '<div class="stock muted" style="margin-top:8px;"></div>';
@@ -102,12 +124,29 @@
     return sel;
   }
 
+  // Show glass fields or charge (m²/rate) fields depending on the brand.
+  function applyMode(el) {
+    var charge = isChargeBrand(brandOf(el));
+    el.querySelectorAll('.glass-fields').forEach(function (g) {
+      g.style.display = charge ? 'none' : 'block';
+    });
+    el.querySelector('.charge-fields').style.display = charge ? 'block' : 'none';
+    if (charge) el.querySelector('.stock').innerHTML = '';
+  }
+
   function onBrandChange(node) {
     var el = node.closest('.item');
     var other = el.querySelector('.it-brand-other');
     if (node.value === '__other__') { other.style.display = 'block'; other.focus(); }
     else { other.style.display = 'none'; }
-    checkStock(node);
+    applyMode(el);
+    if (!isChargeBrand(brandOf(el))) checkStock(node);
+  }
+
+  function onOtherBrand(node) {
+    var el = node.closest('.item');
+    applyMode(el);
+    if (!isChargeBrand(brandOf(el))) checkStock(node);
   }
 
   function checkStock(node) {
@@ -142,6 +181,8 @@
         breadth: el.querySelector('.it-brd').value.trim(),
         sheets: el.querySelector('.it-sheets').value.trim(),
         rate: el.querySelector('.it-rate').value.trim(),
+        m2: el.querySelector('.it-m2').value.trim(),
+        rate_m2: el.querySelector('.it-ratem2').value.trim(),
         description: el.querySelector('.it-desc').value.trim()
       });
     });
@@ -152,7 +193,11 @@
   function money(n) { return Number(n).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
 
   function doPreview() {
-    var payload = { customer: document.getElementById('customer').value, items: collectItems() };
+    var payload = {
+      customer: document.getElementById('customer').value,
+      removeHandling: document.getElementById('noHandling').checked,
+      items: collectItems()
+    };
     document.getElementById('previewBtn').disabled = true;
     setBusy('status', 'Working…');
     document.getElementById('preview').innerHTML = '';
@@ -169,11 +214,18 @@
     document.getElementById('previewBtn').disabled = false;
     lastPreview = q;
     setBusy('status', '');
-    var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> &middot; ' + q.date;
+    var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> &middot; ' + q.date +
+               (q.removeHandling ? ' &middot; <span class="muted">no handling</span>' : '');
     q.lines.forEach(function (l, i) {
-      var name = l.thickness_mm + 'mm ' + l.brand + (l.description ? ' (' + l.description + ')' : '');
-      html += '<div class="row"><span>' + (i + 1) + '. ' + name +
-              ' &middot; ' + l.length_cm + 'x' + l.breadth_cm + 'cm &middot; ' + l.sheets + ' sheets</span><span>' +
+      var name, detail;
+      if (l.is_charge) {
+        name = l.brand + (l.description ? ' (' + l.description + ')' : '');
+        detail = l.m2 + ' m² &middot; &#8377;' + l.rate_m2 + '/m²';
+      } else {
+        name = l.thickness_mm + 'mm ' + l.brand + (l.description ? ' (' + l.description + ')' : '');
+        detail = l.length_cm + 'x' + l.breadth_cm + 'cm &middot; ' + l.sheets + ' sheets';
+      }
+      html += '<div class="row"><span>' + (i + 1) + '. ' + name + ' &middot; ' + detail + '</span><span>' +
               (l.rate_missing ? '<span class="err">no rate</span>' : '&#8377;' + money(l.total)) + '</span></div>';
     });
     if (q.missing.length) {

@@ -41,7 +41,16 @@ the quote and PDF. Do these steps once on a Windows/Mac computer in Chrome.
   **Confirm & save + PDF**. It's added to `QUOTATIONS` and the PDF is emailed to you and
   saved to a Drive folder "Rachna Quotes". Landscape for ≤ 8 items, portrait for
   more.
+- **Loading / transport charge:** pick **loading** or **transport** as the
+  brand. The glass fields are replaced by **m²** and **Rate per m² (pretax)** —
+  type those two and it's priced as a charge line (no thickness/size needed).
+- **Remove handling charges:** tick **Remove handling charges (1%)** at the top
+  before previewing — every line on that quote is saved with handling set to 0.
 - **Re-print an old quote:** type its number under "Re-print an old quote" → **Get PDF**.
+
+New quotes are inserted **directly after your last quote** — the app finds the
+bottom of the ledger by the **thickness column** (filled on every real line),
+not the quote-number column (which stays filled far down the sheet).
 
 ## Rates
 Type the rate on each item line. To avoid retyping common rates, make a tab named

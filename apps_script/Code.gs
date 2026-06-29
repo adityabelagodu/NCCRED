@@ -42,8 +42,18 @@ var BRANDS = [
   'sg sapphire blue reflective', 'sg ultrafix clear silicone', 'sumangal fluted',
   'sumangal karthachi', 'sumangal kasumi', 'sumangal matrix', 'sumangal mgn',
   'sumangal pinhead', 'sumangal sparkle', 'wave glass blocks indonesia',
-  'xyg ar', 'xyg mirror'
+  'xyg ar', 'xyg mirror',
+  // Charge lines (priced by m² × rate per m², not by glass dimensions):
+  'loading', 'transport'
 ];
+
+// Brands that are a CHARGE line (loading / transport): the user enters m^2 and
+// Rate per m^2 (pretax) directly, instead of thickness/size/sheets.
+function isChargeBrand_(brand) {
+  var b = (brand || '').trim().toLowerCase();
+  return b === 'loading' || b === 'transport' || b === 'transportation' ||
+         b.indexOf('loading') >= 0 || b.indexOf('transport') >= 0;
+}
 
 // ---- Web app entry ----------------------------------------------------------
 function doGet() {
@@ -75,26 +85,46 @@ function readRatesTab_() {
   return map;
 }
 
-// ---- Pricing (matches quote #1284) -----------------------------------------
-function priceItem_(item, rate, gst) {
-  var area = (item.length_cm / 100) * (item.breadth_cm / 100) * item.sheets;
+// ---- Pricing (mirrors the QUOTATIONS sheet formulas) -----------------------
+// Sheet columns: K=m^2, L=Rate per m^2 (pretax), M=Handling (=K*L*1%),
+// N=Pre-tax value (=K*L+M), O=Invoice after tax (=N*1.18).
+//   glass : K = L*B*sheets/10000 ;  L = thickness*rate*0.84746  (0.84746 = 1/1.18)
+//   charge: K = m^2 entered ;       L = rate per m^2 entered (pretax)
+// removeHandling drops M (the 1%), so N = K*L.
+function priceLine_(item, removeHandling) {
   var line = {
-    thickness_mm: item.thickness_mm, brand: item.brand,
-    length_cm: item.length_cm, breadth_cm: item.breadth_cm, sheets: item.sheets,
-    description: item.description || '', area_m2: round_(area, 4),
-    rate: null, gst: null, taxable: 0, cgst: 0, sgst: 0, total: 0,
-    rate_missing: (rate === null || rate === undefined)
+    is_charge: !!item.is_charge, brand: item.brand, description: item.description || '',
+    thickness_mm: 0, length_cm: 0, breadth_cm: 0, sheets: 0, rate: 0,
+    m2: 0, rate_m2: 0, taxable: 0, cgst: 0, sgst: 0, total: 0, rate_missing: false
   };
-  if (rate !== null && rate !== undefined) {
-    var valueIncl = rate * (1 + RATE_EXTRA_PCT / 100) * item.thickness_mm * area;
-    line.rate = rate;
-    line.gst = gst;
-    line.total = Math.round(valueIncl);
-    line.taxable = round_(valueIncl / (1 + gst / 100), 2);
-    var half = round_(line.taxable * (gst / 100) / 2, 2);
-    line.cgst = half;
-    line.sgst = half;
+  var base; // K * L  (pre-tax, before handling)
+  if (item.is_charge) {
+    if (item.m2 === null || item.m2 === undefined || item.rate_m2 === null || item.rate_m2 === undefined) {
+      line.rate_missing = true; return line;
+    }
+    line.m2 = round_(item.m2, 4);
+    line.rate_m2 = round_(item.rate_m2, 4);
+    base = item.m2 * item.rate_m2;
+  } else {
+    if (item.rate === null || item.rate === undefined) { line.rate_missing = true; return line; }
+    line.thickness_mm = item.thickness_mm;
+    line.length_cm = item.length_cm;
+    line.breadth_cm = item.breadth_cm;
+    line.sheets = item.sheets;
+    line.rate = item.rate;
+    var area = (item.length_cm / 100) * (item.breadth_cm / 100) * item.sheets;     // K
+    var ratePerM2 = item.thickness_mm * item.rate * 0.84746;                        // L
+    line.m2 = round_(area, 4);
+    line.rate_m2 = round_(ratePerM2, 4);
+    base = area * ratePerM2;
   }
+  var handling = removeHandling ? 0 : base * 0.01;     // M
+  var taxable = base + handling;                       // N
+  line.taxable = round_(taxable, 2);
+  line.total = Math.round(taxable * 1.18);             // O
+  var half = round_(taxable * 0.09, 2);
+  line.cgst = half;
+  line.sgst = half;
   return line;
 }
 
@@ -116,37 +146,53 @@ function blankRow_(it) {
 /** Preview a quote from the form, without writing anything. */
 function previewQuote(payload) {
   var rates = readRatesTab_();
+  var removeHandling = !!payload.removeHandling;
   var lines = [];
   (payload.items || []).forEach(function (it, idx) {
+    var brand = (it.brand || '').trim();
+
+    if (isChargeBrand_(brand)) {
+      // Charge line: m^2 and Rate per m^2 (pretax) entered directly.
+      var m2 = parseFloat(it.m2);
+      var rateM2 = parseFloat(it.rate_m2);
+      if (isNaN(m2) && isNaN(rateM2)) return; // left blank — skip
+      if (isNaN(m2) || isNaN(rateM2)) {
+        throw new Error('Charge line ' + (idx + 1) + ' (' + brand +
+          ') — enter both m² and Rate per m².');
+      }
+      lines.push(priceLine_({
+        is_charge: true, brand: brand, description: (it.description || '').trim(),
+        m2: m2, rate_m2: rateM2
+      }, removeHandling));
+      return;
+    }
+
     if (blankRow_(it)) return;
     var thickness = parseFloat(it.thickness);
     var length = parseFloat(it.length);
     var breadth = parseFloat(it.breadth);
     var sheets = parseInt(it.sheets, 10);
-    var brand = (it.brand || '').trim();
     if (!brand || isNaN(thickness) || isNaN(length) || isNaN(breadth) || isNaN(sheets)) {
       throw new Error('Item ' + (idx + 1) +
         ' is incomplete — fill thickness, brand, length, breadth and sheets.');
     }
     var rate = (it.rate !== '' && it.rate != null && !isNaN(parseFloat(it.rate)))
       ? parseFloat(it.rate) : null;
-    var gst = (it.gst !== '' && it.gst != null && !isNaN(parseFloat(it.gst)))
-      ? parseFloat(it.gst) : DEFAULT_GST_PCT;
     if (rate === null) {
       var r = rates[brand.toLowerCase() + '|' + thickness];
-      if (r) { rate = r.rate; gst = r.gst; }
+      if (r) { rate = r.rate; }
     }
-    lines.push(priceItem_({
-      thickness_mm: thickness, brand: brand,
-      length_cm: length, breadth_cm: breadth, sheets: sheets,
-      description: (it.description || '').trim()
-    }, rate, gst));
+    lines.push(priceLine_({
+      is_charge: false, brand: brand, description: (it.description || '').trim(),
+      thickness_mm: thickness, length_cm: length, breadth_cm: breadth,
+      sheets: sheets, rate: rate
+    }, removeHandling));
   });
 
   if (!lines.length) throw new Error('Add at least one item.');
 
   var missing = lines.filter(function (l) { return l.rate_missing; }).map(function (l) {
-    return l.brand + ' ' + l.thickness_mm + 'mm';
+    return l.is_charge ? (l.brand + ' (m²/rate)') : (l.brand + ' ' + l.thickness_mm + 'mm');
   });
   var taxable = 0, cgst = 0, sgst = 0, total = 0;
   lines.forEach(function (l) {
@@ -157,6 +203,7 @@ function previewQuote(payload) {
     ok: missing.length === 0,
     customer: (payload.customer || '').trim(),
     date: todayStr_(),
+    removeHandling: removeHandling,
     lines: lines,
     missing: missing,
     totals: {
@@ -186,22 +233,30 @@ function commitQuote(quote) {
     var nCols = Math.max(26, data.getLastColumn());
     var lastLedger = lastLedgerRow_(data);
     if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
+    var removeHandling = !!quote.removeHandling;
 
-    // Formulas from a real quote row. Array-formula cells (incl. column A — the
-    // Vlookup key — and the calc columns) read back as '' here and fill
-    // themselves; we must NOT write those. Per-row fill-down formulas read back
-    // real and must be recreated on the new row.
-    var tmplFormulas = (lastLedger >= FIRST_DATA_ROW)
-      ? data.getRange(lastLedger, 1, 1, nCols).getFormulasR1C1()[0]
+    // Clone the calc formulas (m², rate/m², handling, taxes…) from a real GLASS
+    // row — NOT a loading row (those carry literal K/L and would clone nothing).
+    var tmplRow = (lastLedger >= FIRST_DATA_ROW) ? glassTemplateRow_(data, lastLedger) : 0;
+    var tmplFormulas = tmplRow
+      ? data.getRange(tmplRow, 1, 1, nCols).getFormulasR1C1()[0]
       : null;
 
     quote.lines.forEach(function (l, idx) {
       var target = lastLedger + 1 + idx;
       data.insertRowAfter(lastLedger + idx);
 
+      // Columns we'll write as literal values, so don't overwrite them with the
+      // template's formula: charge lines own K(11)/L(12); removing handling
+      // forces M(13)=0.
+      var literalCols = {};
+      if (l.is_charge) { literalCols[11] = true; literalCols[12] = true; }
+      if (removeHandling) literalCols[13] = true;
+
       if (tmplFormulas) {
         for (var col = 1; col <= nCols; col++) {
           if (col >= 2 && col <= 10) continue;       // B..J are inputs (below)
+          if (literalCols[col]) continue;
           var f = tmplFormulas[col - 1];
           if (f) data.getRange(target, col).setFormulaR1C1(f);
         }
@@ -209,10 +264,19 @@ function commitQuote(quote) {
       // Brand cell (F) carries the description too, only when one was entered.
       var brandCell = l.brand + (l.description ? ' - ' + l.description : '');
       // Inputs only: B..J. NEVER write column A (the sheet builds its key there).
+      // Charge lines store thickness/size/sheets/rate as 0 (keeps the column-E
+      // key non-blank and the ledger contiguous).
       data.getRange(target, 2, 1, 9).setValues([[
         quote.date, quoteNumber, quote.customer,
         l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate
       ]]);
+      // Charge line: m² and Rate per m² (pretax) go straight into K and L.
+      if (l.is_charge) {
+        data.getRange(target, 11).setValue(l.m2);
+        data.getRange(target, 12).setValue(l.rate_m2);
+      }
+      // Handling removed: zero column M so N = K*L (no 1% added).
+      if (removeHandling) data.getRange(target, 13).setValue(0);
     });
     SpreadsheetApp.flush();
   } finally {
@@ -252,28 +316,34 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   }
 }
 
-/** Bottom of the CONTIGUOUS quote ledger. Scans DOWN from the first data row
- *  and follows the unbroken run of real quote rows (column C holds a quote
- *  number). The moment a real break appears — the big empty gap below your last
- *  quote — it stops, so new rows insert directly after your latest quote and
- *  NOT among the leftover/pivot/summary content that sits lower in the sheet.
- *  A lone stray blank inside the ledger is tolerated; two+ in a row end it.
- *  Works no matter where your last quote is (row 776, etc.). 0 if none. */
+/** Bottom of the quote ledger, found via the THICKNESS column (E).
+ *  Column E is filled on every real quote line — glass lines carry their mm,
+ *  loading/transport lines carry 0 — and is blank only AFTER your quotes. (The
+ *  quote# column C, by contrast, is filled far down the sheet, which is why it
+ *  can't be used.) So: skip the leading rows (the brand drop-down list, which
+ *  have E blank), then return the last row of the unbroken block of filled
+ *  thickness cells — i.e. the row just before the first blank thickness row.
+ *  New quotes then insert at that first blank row, right after your last quote.
+ *  Returns 0 if no data. */
 function lastLedgerRow_(data) {
   var last = data.getLastRow();
   if (last < FIRST_DATA_ROW) return 0;
-  var c = data.getRange(FIRST_DATA_ROW, 3, last - FIRST_DATA_ROW + 1, 1).getValues();
-  var bottom = 0;   // last confirmed quote row
-  var gap = 0;      // consecutive non-quote rows seen since the last quote row
-  for (var i = 0; i < c.length; i++) {
-    var cn = parseFloat(c[i][0]);
-    if (!isNaN(cn) && cn > 0) {
-      bottom = FIRST_DATA_ROW + i;
-      gap = 0;
-    } else if (bottom > 0) {
-      gap++;
-      if (gap >= 2) break; // real gap: the contiguous ledger has ended
-    }
+  var e = data.getRange(FIRST_DATA_ROW, 5, last - FIRST_DATA_ROW + 1, 1).getValues();
+  var started = false, bottom = 0;
+  for (var i = 0; i < e.length; i++) {
+    var v = e[i][0];
+    var filled = (v !== '' && v !== null);
+    if (filled) { started = true; bottom = FIRST_DATA_ROW + i; }
+    else if (started) break; // first blank thickness after the data block = end
+  }
+  return bottom;
+}
+
+/** A recent GLASS row (column K = m² holds a formula) whose calc formulas we can
+ *  clone onto new rows. Loading rows store literal K/L, so they're skipped. */
+function glassTemplateRow_(data, bottom) {
+  for (var r = bottom; r >= FIRST_DATA_ROW; r--) {
+    if (data.getRange(r, 11).getFormula()) return r; // K has a formula
   }
   return bottom;
 }
@@ -293,24 +363,31 @@ function reprintQuote(quoteNumber) {
 
 // ---- Helpers ----------------------------------------------------------------
 function nextQuoteNumber_(dataSheet) {
-  // Take the number from the bottom of the contiguous ledger (your latest
-  // quote) and add 1 — so a new quote right below 1291 becomes 1292, ignoring
-  // any stale/higher numbers that may linger in content below the ledger.
+  // Highest quote number within the real ledger (rows up to the thickness-column
+  // bottom), plus 1. Restricting to the ledger ignores the stale quote numbers
+  // that are filled far down column C below your quotes.
   var bottom = lastLedgerRow_(dataSheet);
-  if (bottom >= FIRST_DATA_ROW) {
-    var n = parseInt(dataSheet.getRange(bottom, 3).getValue(), 10);
-    if (!isNaN(n) && n > 0) return n + 1;
-  }
-  return 1285;
+  if (bottom < FIRST_DATA_ROW) return 1285;
+  var col = dataSheet.getRange(FIRST_DATA_ROW, 3, bottom - FIRST_DATA_ROW + 1, 1).getValues();
+  var max = 0;
+  col.forEach(function (r) {
+    var n = parseInt(r[0], 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+  return max ? max + 1 : 1285;
 }
 
 function summariseQuote_(dataSheet, quoteNumber) {
   var last = dataSheet.getLastRow();
   var out = { count: 0, customer: '', date: '' };
   if (last < FIRST_DATA_ROW) return out;
-  var rows = dataSheet.getRange(FIRST_DATA_ROW, 2, last - FIRST_DATA_ROW + 1, 3).getValues();
+  // Read B(date) C(quote#) D(customer) E(thickness). Count only real line rows
+  // (thickness filled) — the quote# column is also filled on empty rows far
+  // below the ledger, which must NOT be counted.
+  var rows = dataSheet.getRange(FIRST_DATA_ROW, 2, last - FIRST_DATA_ROW + 1, 4).getValues();
   rows.forEach(function (r) {
-    if (parseInt(r[1], 10) === quoteNumber) {
+    var hasLine = (r[3] !== '' && r[3] !== null);
+    if (hasLine && parseInt(r[1], 10) === quoteNumber) {
       out.count++;
       if (!out.date) out.date = r[0];
       if (!out.customer) out.customer = r[2];
@@ -453,19 +530,17 @@ function diagnose() {
   var d = data.getRange(1, 4, last, 1).getValues();
   var e = data.getRange(1, 5, last, 1).getValues();
   var out = ['DATA_TAB=' + DATA_TAB, 'getLastRow=' + last,
-             'lastLedgerRow (contiguous ledger bottom)=' + lastLedger,
+             'lastLedgerRow (thickness-column bottom)=' + lastLedger,
              'quote# at that row=' + (lastLedger ? data.getRange(lastLedger, 3).getValue() : '-'),
              'next quote number=' + nextQuoteNumber_(data),
              'next insert would go to row ' + (lastLedger + 1),
-             '--- newest 12 rows with a quote# ---'];
+             '--- bottom 12 ledger rows (thickness filled) ---'];
   var shown = 0;
-  for (var r = last; r >= FIRST_DATA_ROW && shown < 12; r--) {
-    var n = parseInt(c[r - 1][0], 10);
-    if (!isNaN(n) && n > 0) {
-      out.push('row ' + r + ':  quote#=' + c[r - 1][0] +
-               '  customer=' + (d[r - 1][0] || '') + '  thickness=' + (e[r - 1][0] || ''));
-      shown++;
-    }
+  for (var r = lastLedger; r >= FIRST_DATA_ROW && shown < 12; r--) {
+    if (e[r - 1][0] === '' || e[r - 1][0] === null) continue;
+    out.push('row ' + r + ':  quote#=' + (c[r - 1][0] || '') +
+             '  customer=' + (d[r - 1][0] || '') + '  thickness=' + e[r - 1][0]);
+    shown++;
   }
   Logger.log(out.join('\n'));
   return out.join('\n');
