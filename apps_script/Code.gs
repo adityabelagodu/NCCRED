@@ -230,46 +230,35 @@ function commitQuote(quote) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    var nCols = Math.max(26, data.getLastColumn());
     var lastLedger = lastLedgerRow_(data);
     if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
     var removeHandling = !!quote.removeHandling;
-
-    // Clone the calc formulas (m², rate/m², handling, taxes…) from a real GLASS
-    // row — NOT a loading row (those carry literal K/L and would clone nothing).
-    var tmplRow = (lastLedger >= FIRST_DATA_ROW) ? glassTemplateRow_(data, lastLedger) : 0;
-    var tmplFormulas = tmplRow
-      ? data.getRange(tmplRow, 1, 1, nCols).getFormulasR1C1()[0]
-      : null;
 
     quote.lines.forEach(function (l, idx) {
       var target = lastLedger + 1 + idx;
       data.insertRowAfter(lastLedger + idx);
 
-      // Columns we'll write as literal values, so don't overwrite them with the
-      // template's formula: charge lines own K(11)/L(12); removing handling
-      // forces M(13)=0.
-      var literalCols = {};
-      if (l.is_charge) { literalCols[11] = true; literalCols[12] = true; }
-      if (removeHandling) literalCols[13] = true;
-
-      if (tmplFormulas) {
-        for (var col = 1; col <= nCols; col++) {
-          if (col >= 2 && col <= 10) continue;       // B..J are inputs (below)
-          if (literalCols[col]) continue;
-          var f = tmplFormulas[col - 1];
-          if (f) data.getRange(target, col).setFormulaR1C1(f);
-        }
-      }
       // Brand cell (F) carries the description too, only when one was entered.
       var brandCell = l.brand + (l.description ? ' - ' + l.description : '');
-      // Inputs only: B..J. NEVER write column A (the sheet builds its key there).
-      // Charge lines store thickness/size/sheets/rate as 0 (keeps the column-E
-      // key non-blank and the ledger contiguous).
+      // Inputs only: B..J. Charge lines store thickness/size/sheets/rate as 0
+      // (keeps the column-E key non-blank and the ledger contiguous).
       data.getRange(target, 2, 1, 9).setValues([[
         quote.date, quoteNumber, quote.customer,
         l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate
       ]]);
+
+      // Write the sheet's own calc formulas explicitly (A key, m², rate/m²,
+      // handling, taxes, stock lookups, day-book totals). We do NOT clone a
+      // template row: recent quotes are stored as hardcoded values, and the
+      // sheet's own AC-column formula contains a #REF! — cloning either would
+      // corrupt the new rows. See ledgerFormulas_().
+      var f = ledgerFormulas_(target);
+      if (l.is_charge) { delete f[11]; delete f[12]; }  // K/L are entered literally
+      if (removeHandling) delete f[13];                 // M forced to 0
+      Object.keys(f).forEach(function (col) {
+        data.getRange(target, parseInt(col, 10)).setFormula(f[col]);
+      });
+
       // Charge line: m² and Rate per m² (pretax) go straight into K and L.
       if (l.is_charge) {
         data.getRange(target, 11).setValue(l.m2);
@@ -277,6 +266,11 @@ function commitQuote(quote) {
       }
       // Handling removed: zero column M so N = K*L (no 1% added).
       if (removeHandling) data.getRange(target, 13).setValue(0);
+
+      // AC ("count of this line within the quote") as a plain value — the
+      // sheet's own AC formula is broken (#REF!). 1 on the first line makes the
+      // P column show the invoice total once; >1 on later lines makes P = 0.
+      data.getRange(target, 29).setValue(idx === 0 ? 1 : 2);
     });
     SpreadsheetApp.flush();
   } finally {
@@ -339,13 +333,39 @@ function lastLedgerRow_(data) {
   return bottom;
 }
 
-/** A recent GLASS row (column K = m² holds a formula) whose calc formulas we can
- *  clone onto new rows. Loading rows store literal K/L, so they're skipped. */
-function glassTemplateRow_(data, bottom) {
-  for (var r = bottom; r >= FIRST_DATA_ROW; r--) {
-    if (data.getRange(r, 11).getFormula()) return r; // K has a formula
-  }
-  return bottom;
+/** The QUOTATIONS calc formulas for a given row, keyed by column number.
+ *  These mirror the sheet's own formulas (verified from the workbook). Written
+ *  explicitly rather than cloned, because recent quote rows are stored as
+ *  hardcoded values and the sheet's AC-column formula contains a #REF!.
+ *  Columns: A=1 key, K=11 m², L=12 rate/m², M=13 handling, N=14 pre-tax,
+ *  O=15 after-tax, P=16 invoice, R=18/S=19 rough, T=20 stock key,
+ *  U..Z=21..26 stock lookups, AA=27 sum, AB=28 day-book, AD=30 mm/m². */
+function ledgerFormulas_(r) {
+  var a = FIRST_DATA_ROW; // running-count anchor row for the line-number key
+  return {
+    1:  '=IF(E' + r + '="","",C' + r + '&COUNTIF(C$' + a + ':C' + r + ',C' + r + '))',
+    11: '=IF(J' + r + '=0,0,G' + r + '*H' + r + '*I' + r + '*10^-4)',
+    12: '=E' + r + '*J' + r + '*0.84746',
+    13: '=K' + r + '*L' + r + '*0.01',
+    14: '=K' + r + '*L' + r + '+M' + r,
+    15: '=N' + r + '*1.18',
+    16: '=IFS(D' + r + '="",0,AC' + r + '=1,(IF(AND((AA' + r + '-AB' + r + ')<50,(AA' + r + '-AB' + r +
+        ')>=(-50)),AB' + r + ',AA' + r + ')),AC' + r + '>1,0)',
+    18: '=IF(Q' + r + '="","",IF(AND((AA' + r + '-AB' + r + ')<50,(AA' + r + '-AB' + r +
+        ')>=(-50)),"",AB' + r + '))',
+    19: '=IFERROR(IFS(R' + r + '="","",R' + r + '="bal",AB' + r + ',R' + r + '="HAR",AB' + r + ',R' +
+        r + '="SAT",AB' + r + '),"")',
+    20: '=E' + r + '&" "&F' + r + '&" "&G' + r + '&" "&H' + r,
+    21: "=IFERROR(VLOOKUP(T" + r + ",'J STOCKBOOK'!A:C,2,FALSE),0)",
+    22: "=IFERROR(VLOOKUP(T" + r + ",'J STOCKBOOK'!A:C,3,FALSE),0)",
+    23: "=IFERROR(VLOOKUP(T" + r + ",'JP STOCKBOOK'!A:C,2,FALSE),0)",
+    24: "=IFERROR(VLOOKUP(T" + r + ",'JP STOCKBOOK'!A:C,3,FALSE),0)",
+    25: "=IFERROR(VLOOKUP(T" + r + ",'O STOCKBOOK'!A:C,2,FALSE),0)",
+    26: "=IFERROR(VLOOKUP(T" + r + ",'O STOCKBOOK'!A:C,3,FALSE),0)",
+    27: '=SUMIF(C:C,C' + r + ',O:O)',
+    28: "=IFERROR(VLOOKUP(C" + r + ",'CONSOLIDATED DAY BOOK'!D:H,5,FALSE),AA" + r + ")",
+    30: '=K' + r + '*E' + r
+  };
 }
 
 /** Re-print an existing quote by number using the lookup tabs (cell H4). */
