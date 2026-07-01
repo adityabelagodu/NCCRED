@@ -95,7 +95,7 @@ function priceLine_(item, removeHandling) {
   var line = {
     is_charge: !!item.is_charge, brand: item.brand, description: item.description || '',
     thickness_mm: 0, length_cm: 0, breadth_cm: 0, sheets: 0, rate: 0,
-    m2: 0, rate_m2: 0, taxable: 0, cgst: 0, sgst: 0, total: 0, rate_missing: false
+    m2: 0, rate_m2: 0, taxable: 0, taxable_full: 0, cgst: 0, sgst: 0, total: 0, rate_missing: false
   };
   var base; // K * L  (pre-tax, before handling)
   if (item.is_charge) {
@@ -104,7 +104,9 @@ function priceLine_(item, removeHandling) {
     }
     line.m2 = round_(item.m2, 4);
     line.rate_m2 = round_(item.rate_m2, 4);
-    base = item.m2 * item.rate_m2;
+    // Use the rounded K/L that will actually be written to the sheet, so the
+    // preview matches what the sheet recomputes from those literals.
+    base = line.m2 * line.rate_m2;
   } else {
     if (item.rate === null || item.rate === undefined) { line.rate_missing = true; return line; }
     line.thickness_mm = item.thickness_mm;
@@ -112,6 +114,8 @@ function priceLine_(item, removeHandling) {
     line.breadth_cm = item.breadth_cm;
     line.sheets = item.sheets;
     line.rate = item.rate;
+    // Glass K/L are formulas on the sheet, recomputed from these inputs, so keep
+    // full precision here to mirror them.
     var area = (item.length_cm / 100) * (item.breadth_cm / 100) * item.sheets;     // K
     var ratePerM2 = item.thickness_mm * item.rate * 0.84746;                        // L
     line.m2 = round_(area, 4);
@@ -119,9 +123,10 @@ function priceLine_(item, removeHandling) {
     base = area * ratePerM2;
   }
   var handling = removeHandling ? 0 : base * 0.01;     // M
-  var taxable = base + handling;                       // N
+  var taxable = base + handling;                       // N (pre-tax value)
+  line.taxable_full = taxable;                         // full precision, for grand total
   line.taxable = round_(taxable, 2);
-  line.total = Math.round(taxable * 1.18);             // O
+  line.total = Math.round(taxable * 1.18);             // O, per-line display only
   var half = round_(taxable * 0.09, 2);
   line.cgst = half;
   line.sgst = half;
@@ -194,10 +199,11 @@ function previewQuote(payload) {
   var missing = lines.filter(function (l) { return l.rate_missing; }).map(function (l) {
     return l.is_charge ? (l.brand + ' (m²/rate)') : (l.brand + ' ' + l.thickness_mm + 'mm');
   });
-  var taxable = 0, cgst = 0, sgst = 0, total = 0;
-  lines.forEach(function (l) {
-    taxable += l.taxable; cgst += l.cgst; sgst += l.sgst; total += l.total;
-  });
+  // Match the printed quote exactly: sum the full-precision pre-tax (N) values,
+  // then derive Taxable / CGST / SGST / Total from that single sum (the sheet
+  // rounds only for display). This keeps the previewed Total equal to the PDF.
+  var taxFull = 0;
+  lines.forEach(function (l) { taxFull += l.taxable_full; });
 
   return {
     ok: missing.length === 0,
@@ -207,8 +213,10 @@ function previewQuote(payload) {
     lines: lines,
     missing: missing,
     totals: {
-      taxable: round_(taxable, 2), cgst: round_(cgst, 2),
-      sgst: round_(sgst, 2), total: Math.round(total)
+      taxable: round_(taxFull, 2),
+      cgst: round_(taxFull * 0.09, 2),
+      sgst: round_(taxFull * 0.09, 2),
+      total: Math.round(taxFull * 1.18)
     }
   };
 }
