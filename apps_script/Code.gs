@@ -208,6 +208,8 @@ function previewQuote(payload) {
   return {
     ok: missing.length === 0,
     customer: (payload.customer || '').trim(),
+    vehicle: (payload.vehicle || '').trim(),
+    destination: (payload.destination || '').trim(),
     date: todayStr_(),
     removeHandling: removeHandling,
     lines: lines,
@@ -242,6 +244,11 @@ function commitQuote(quote) {
     if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
     var removeHandling = !!quote.removeHandling;
 
+    // Column B carries the vehicle number / destination (NOT the date) — it is
+    // what the printed quote shows under the buyer's name.
+    var vehicleDest = [(quote.vehicle || '').trim(), (quote.destination || '').trim()]
+      .filter(function (s) { return s; }).join(' / ');
+
     quote.lines.forEach(function (l, idx) {
       var target = lastLedger + 1 + idx;
       data.insertRowAfter(lastLedger + idx);
@@ -251,7 +258,7 @@ function commitQuote(quote) {
       // Inputs only: B..J. Charge lines store thickness/size/sheets/rate as 0
       // (keeps the column-E key non-blank and the ledger contiguous).
       data.getRange(target, 2, 1, 9).setValues([[
-        quote.date, quoteNumber, quote.customer,
+        vehicleDest, quoteNumber, quote.customer,
         l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate
       ]]);
 
@@ -302,12 +309,16 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   var previous = cell.getValue();
   cell.setValue(quoteNumber);
   SpreadsheetApp.flush();
-  // The PDF export endpoint can serve a copy of the sheet from a moment ago, so
-  // wait for the new quote number in H4 to fully settle before exporting —
-  // otherwise it captures whatever quote was shown before.
-  Utilities.sleep(6000);
-  SpreadsheetApp.flush();
   try {
+    // Google's export endpoint can serve a snapshot from BEFORE the H4 change
+    // (this produced PDFs of the previous quote). A fixed sleep is not
+    // reliable, so instead poll the same endpoint in CSV form — plain text —
+    // until the snapshot actually contains the new quote number, and only
+    // then fetch the PDF. Same backend snapshot => the PDF cannot be stale.
+    if (!waitForExportFresh_(tab.getSheetId(), quoteNumber)) {
+      throw new Error('The sheet is taking unusually long to refresh. Quote #' +
+        quoteNumber + ' IS saved — wait a few seconds and use "Re-print an old quote".');
+    }
     var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
     var blob = exportTabPdf_(tabName, portrait, fileName);
     var link = deliver_(blob, quoteNumber, customer);
@@ -316,6 +327,29 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
     cell.setValue(previous === '' ? '' : previous);
     SpreadsheetApp.flush();
   }
+}
+
+/** Poll the export endpoint (CSV) until its snapshot shows the quote number.
+ *  Returns true when fresh; false after ~45s of trying. */
+function waitForExportFresh_(gid, quoteNumber) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() +
+            '/export?format=csv&gid=' + gid;
+  var want = String(quoteNumber);
+  for (var attempt = 0; attempt < 15; attempt++) {
+    if (attempt > 0) Utilities.sleep(3000);
+    var resp = UrlFetchApp.fetch(url, {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    if (resp.getResponseCode() >= 300) continue;
+    var cells = resp.getContentText().split(/[\r\n,]+/);
+    for (var i = 0; i < cells.length; i++) {
+      var v = cells[i].replace(/^"|"$/g, '').trim();
+      if (v === want) return true;
+    }
+  }
+  return false;
 }
 
 /** Bottom of the quote ledger, found via the THICKNESS column (E).

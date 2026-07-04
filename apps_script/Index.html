@@ -42,6 +42,12 @@
   <label>Customer name</label>
   <input id="customer" placeholder="e.g. Mithul Fab">
 
+  <label>Vehicle number (optional)</label>
+  <input id="vehicle" placeholder="e.g. KA53AA8068">
+
+  <label>Destination (optional)</label>
+  <input id="destination" placeholder="e.g. Jayanagar">
+
   <label style="display:flex;align-items:center;gap:10px;font-weight:600;margin-top:14px;">
     <input type="checkbox" id="noHandling" style="width:auto;"> Remove handling charges (1%)
   </label>
@@ -195,6 +201,8 @@
   function doPreview() {
     var payload = {
       customer: document.getElementById('customer').value,
+      vehicle: document.getElementById('vehicle').value,
+      destination: document.getElementById('destination').value,
       removeHandling: document.getElementById('noHandling').checked,
       items: collectItems()
     };
@@ -214,8 +222,10 @@
     document.getElementById('previewBtn').disabled = false;
     lastPreview = q;
     setBusy('status', '');
+    var vd = [q.vehicle, q.destination].filter(function (s) { return s; }).join(' / ');
     var html = '<div class="card"><b>' + (q.customer || '(no name)') + '</b> &middot; ' + q.date +
-               (q.removeHandling ? ' &middot; <span class="muted">no handling</span>' : '');
+               (q.removeHandling ? ' &middot; <span class="muted">no handling</span>' : '') +
+               (vd ? '<div class="muted">' + vd + '</div>' : '');
     q.lines.forEach(function (l, i) {
       var name, detail;
       if (l.is_charge) {
