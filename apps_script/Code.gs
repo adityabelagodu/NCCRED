@@ -315,7 +315,13 @@ function makeQuotePdf(quoteNumber, count, customer) {
   return exportQuoteByNumber_(quoteNumber, count, customer);
 }
 
-/** Set the quote number into a lookup tab's H4, export it, then restore H4. */
+/** Export a quote's PDF, fast AND never stale.
+ *  Google's export endpoint can serve a snapshot of the spreadsheet from
+ *  BEFORE our changes (it once produced the previous quote's PDF, and waiting
+ *  it out took 30+ seconds). So we never export the main file: set H4, read
+ *  the lookup tab's computed VALUES directly (Apps Script reads are always
+ *  current), snapshot them into a brand-new temporary spreadsheet — which has
+ *  no old version the export server could serve — export that, and delete it. */
 function exportQuoteByNumber_(quoteNumber, count, customer) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var portrait = count > LANDSCAPE_MAX_ITEMS;
@@ -323,51 +329,35 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   var tab = ss.getSheetByName(tabName);
   if (!tab) throw new Error('Tab "' + tabName + '" not found.');
 
+  // Show the quote on the lookup tab and capture its computed values.
   var cell = tab.getRange(QUOTE_INPUT_CELL);
   var previous = cell.getValue();
+  var values;
   cell.setValue(quoteNumber);
   SpreadsheetApp.flush();
   try {
-    // Google's export endpoint can serve a snapshot from BEFORE the H4 change
-    // (this produced PDFs of the previous quote). A fixed sleep is not
-    // reliable, so instead poll the same endpoint in CSV form — plain text —
-    // until the snapshot actually contains the new quote number, and only
-    // then fetch the PDF. Same backend snapshot => the PDF cannot be stale.
-    if (!waitForExportFresh_(tab.getSheetId(), quoteNumber)) {
-      throw new Error('The sheet is taking unusually long to refresh. Quote #' +
-        quoteNumber + ' IS saved — wait a few seconds and use "Re-print an old quote".');
-    }
-    var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
-    var blob = exportTabPdf_(tabName, portrait, fileName);
-    var link = deliver_(blob);
-    return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
+    values = tab.getDataRange().getValues();
   } finally {
     cell.setValue(previous === '' ? '' : previous);
     SpreadsheetApp.flush();
   }
-}
 
-/** Poll the export endpoint (CSV) until its snapshot shows the quote number.
- *  Returns true when fresh; false after ~45s of trying. */
-function waitForExportFresh_(gid, quoteNumber) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() +
-            '/export?format=csv&gid=' + gid;
-  var want = String(quoteNumber);
-  for (var attempt = 0; attempt < 15; attempt++) {
-    if (attempt > 0) Utilities.sleep(3000);
-    var resp = UrlFetchApp.fetch(url, {
-      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-      muteHttpExceptions: true
-    });
-    if (resp.getResponseCode() >= 300) continue;
-    var cells = resp.getContentText().split(/[\r\n,]+/);
-    for (var i = 0; i < cells.length; i++) {
-      var v = cells[i].replace(/^"|"$/g, '').trim();
-      if (v === want) return true;
-    }
+  // Snapshot into a fresh temp spreadsheet (same layout/formatting via copyTo,
+  // formulas replaced by the captured values), export it, then delete it.
+  var temp = SpreadsheetApp.create('tmp_quote_' + quoteNumber);
+  try {
+    var copy = tab.copyTo(temp);
+    copy.getRange(1, 1, values.length, values[0].length).setValues(values);
+    temp.deleteSheet(temp.getSheets()[0]); // the default empty Sheet1
+    SpreadsheetApp.flush();
+
+    var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
+    var blob = exportTabPdf_(temp.getId(), copy.getSheetId(), portrait, fileName);
+    var link = deliver_(blob);
+    return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
+  } finally {
+    DriveApp.getFileById(temp.getId()).setTrashed(true);
   }
-  return false;
 }
 
 /** Bottom of the quote ledger, found via the THICKNESS column (E).
@@ -476,12 +466,8 @@ function summariseQuote_(dataSheet, quoteNumber) {
   return out;
 }
 
-function exportTabPdf_(tabName, portrait, fileName) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(tabName);
-  if (!sheet) throw new Error('Tab "' + tabName + '" not found.');
-  var gid = sheet.getSheetId();
-  var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?' +
+function exportTabPdf_(spreadsheetId, gid, portrait, fileName) {
+  var url = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId + '/export?' +
     'format=pdf' +
     '&gid=' + gid +
     '&portrait=' + (portrait ? 'true' : 'false') +
@@ -490,14 +476,17 @@ function exportTabPdf_(tabName, portrait, fileName) {
     '&gridlines=false&printtitle=false&sheetnames=false&pagenumbers=false' +
     '&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25' +
     '&horizontal_alignment=CENTER&vertical_alignment=TOP';
-  var resp = UrlFetchApp.fetch(url, {
-    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-    muteHttpExceptions: true
-  });
-  if (resp.getResponseCode() >= 300) {
-    throw new Error('PDF export failed (' + resp.getResponseCode() + ').');
+  // A brand-new file can need a moment before the export endpoint serves it.
+  var resp;
+  for (var attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) Utilities.sleep(1500);
+    resp = UrlFetchApp.fetch(url, {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    if (resp.getResponseCode() < 300) return resp.getBlob().setName(fileName);
   }
-  return resp.getBlob().setName(fileName);
+  throw new Error('PDF export failed (' + resp.getResponseCode() + ').');
 }
 
 /** Save the PDF in the "Rachna Quotes" Drive folder and return its link. */
