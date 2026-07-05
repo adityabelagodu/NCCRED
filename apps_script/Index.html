@@ -260,19 +260,18 @@
     document.querySelectorAll('#preview button').forEach(function (b) { b.disabled = true; });
     google.script.run
       .withSuccessHandler(function (res) {
-        // Saved — show it right away. The PDF is made in the background below;
-        // it is emailed regardless, so it's safe to close the app now.
+        // Saved — show it right away. The PDF is made in the background below.
         setBusy('status', '');
         document.getElementById('preview').innerHTML =
           '<div class="card"><div class="ok">Saved quote #' + res.quoteNumber +
           ' (' + res.orientation + ').</div>' +
-          '<div class="muted" id="pdfState">Making the PDF&hellip; it will be emailed to you.' +
-          ' You can keep working or close this page.</div></div>';
+          '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.' +
+          ' You can keep working meanwhile.</div></div>';
         lastPreview = null;
         google.script.run
           .withSuccessHandler(function (p) {
             var el = document.getElementById('pdfState');
-            if (el) el.outerHTML = '<div class="muted">PDF emailed to you.</div>' +
+            if (el) el.outerHTML =
               '<a class="btnlink" href="' + p.link + '" target="_blank">Open PDF</a>';
           })
           .withFailureHandler(function (e) {
@@ -293,7 +292,7 @@
       .withSuccessHandler(function (res) {
         setBusy('reprintStatus',
           '<span class="ok">Quote #' + res.quoteNumber + ' (' + res.orientation +
-          ') emailed.</span> <a href="' + res.link + '" target="_blank">Open PDF</a>');
+          ') ready.</span> <a href="' + res.link + '" target="_blank">Open PDF</a>');
       })
       .withFailureHandler(function (e) { setBusy('reprintStatus', '<span class="err">' + e.message + '</span>'); })
       .reprintQuote(n);

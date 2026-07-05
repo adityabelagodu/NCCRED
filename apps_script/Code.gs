@@ -2,7 +2,7 @@
  * RACHNA ENTERPRISES — phone quote maker (Google Apps Script), no-API version.
  *
  * You fill a simple form (thickness, brand, size, sheets, rate); it prices the
- * quote, appends rows to QUOTATIONS, and emails you the PDF from your formatted
+ * quote, appends rows to QUOTATIONS, and makes the PDF from your formatted
  * tabs. No API key, no external service, no per-quote cost.
  *
  *   - new quote  -> "claude landscape" / "claude portrait" tabs (latest quote)
@@ -309,7 +309,7 @@ function commitQuote(quote) {
   };
 }
 
-/** Step 2, called by the page right after the save: export + email the PDF.
+/** Step 2, called by the page right after the save: export the PDF.
  *  Kept separate so "Confirm & save" itself returns immediately. */
 function makeQuotePdf(quoteNumber, count, customer) {
   return exportQuoteByNumber_(quoteNumber, count, customer);
@@ -339,7 +339,7 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
     }
     var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
     var blob = exportTabPdf_(tabName, portrait, fileName);
-    var link = deliver_(blob, quoteNumber, customer);
+    var link = deliver_(blob);
     return { quoteNumber: quoteNumber, orientation: portrait ? 'portrait' : 'landscape', link: link };
   } finally {
     cell.setValue(previous === '' ? '' : previous);
@@ -500,20 +500,11 @@ function exportTabPdf_(tabName, portrait, fileName) {
   return resp.getBlob().setName(fileName);
 }
 
-function deliver_(blob, quoteNumber, customer) {
+/** Save the PDF in the "Rachna Quotes" Drive folder and return its link. */
+function deliver_(blob) {
   var folders = DriveApp.getFoldersByName('Rachna Quotes');
   var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('Rachna Quotes');
-  var file = folder.createFile(blob);
-  var email = Session.getActiveUser().getEmail();
-  if (email) {
-    MailApp.sendEmail({
-      to: email,
-      subject: 'Quotation #' + quoteNumber + (customer ? ' - ' + customer : ''),
-      body: 'Your quotation PDF is attached.\nAlso saved in Drive: ' + file.getUrl(),
-      attachments: [blob]
-    });
-  }
-  return file.getUrl();
+  return folder.createFile(blob).getUrl();
 }
 
 function safeName_(s) {
