@@ -258,10 +258,14 @@ function commitQuote(quote) {
     // Inputs B..J for every line in one write. Charge lines store
     // thickness/size/sheets/rate as 0 (keeps the column-E key non-blank).
     data.getRange(start, 2, n, 9).setValues(quote.lines.map(function (l) {
-      // Brand cell (F) carries the description too, only when one was entered.
-      var brandCell = l.brand + (l.description ? ' - ' + l.description : '');
       return [vehicleDest, quoteNumber, quote.customer,
-              l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate];
+              l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate];
+    }));
+
+    // Additional description goes to column Q (17) — the print tabs read it
+    // from there ("Additional Description in Item", shown only when filled).
+    data.getRange(start, 17, n, 1).setValues(quote.lines.map(function (l) {
+      return [l.description || ''];
     }));
 
     // Write the sheet's own calc formulas explicitly (A key, m², rate/m²,
