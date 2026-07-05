@@ -473,7 +473,7 @@ function exportTabPdf_(spreadsheetId, gid, portrait, fileName) {
     '&portrait=' + (portrait ? 'true' : 'false') +
     '&size=A4' +
     '&scale=4' + // 4 = fit to page, so the whole quote is one page
-    '&gridlines=false&printtitle=false&sheetnames=false&pagenumbers=false' +
+    '&gridlines=true&printtitle=false&sheetnames=false&pagenumbers=false' + // gridlines give the ruled table lines
     '&top_margin=0.25&bottom_margin=0.25&left_margin=0.25&right_margin=0.25' +
     '&horizontal_alignment=CENTER&vertical_alignment=TOP';
   // A brand-new file can need a moment before the export endpoint serves it.
