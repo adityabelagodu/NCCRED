@@ -256,16 +256,30 @@
 
   function doCommit() {
     if (!lastPreview) return;
-    setBusy('status', 'Saving and making the PDF…');
+    setBusy('status', 'Saving…');
     document.querySelectorAll('#preview button').forEach(function (b) { b.disabled = true; });
     google.script.run
       .withSuccessHandler(function (res) {
+        // Saved — show it right away. The PDF is made in the background below;
+        // it is emailed regardless, so it's safe to close the app now.
         setBusy('status', '');
         document.getElementById('preview').innerHTML =
           '<div class="card"><div class="ok">Saved quote #' + res.quoteNumber +
-          ' (' + res.orientation + ').</div><div class="muted">PDF emailed to you.</div>' +
-          '<a class="btnlink" href="' + res.link + '" target="_blank">Open PDF</a></div>';
+          ' (' + res.orientation + ').</div>' +
+          '<div class="muted" id="pdfState">Making the PDF&hellip; it will be emailed to you.' +
+          ' You can keep working or close this page.</div></div>';
         lastPreview = null;
+        google.script.run
+          .withSuccessHandler(function (p) {
+            var el = document.getElementById('pdfState');
+            if (el) el.outerHTML = '<div class="muted">PDF emailed to you.</div>' +
+              '<a class="btnlink" href="' + p.link + '" target="_blank">Open PDF</a>';
+          })
+          .withFailureHandler(function (e) {
+            var el = document.getElementById('pdfState');
+            if (el) el.innerHTML = '<span class="err">' + e.message + '</span>';
+          })
+          .makeQuotePdf(res.quoteNumber, res.count, res.customer);
       })
       .withFailureHandler(function (e) { setBusy('status', '<span class="err">' + e.message + '</span>'); })
       .commitQuote(lastPreview);

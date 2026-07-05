@@ -249,52 +249,70 @@ function commitQuote(quote) {
     var vehicleDest = [(quote.vehicle || '').trim(), (quote.destination || '').trim()]
       .filter(function (s) { return s; }).join(' / ');
 
-    quote.lines.forEach(function (l, idx) {
-      var target = lastLedger + 1 + idx;
-      data.insertRowAfter(lastLedger + idx);
+    var n = quote.lines.length;
+    var start = lastLedger + 1;
 
+    // Batched writes (one call per block, not per cell) so saving is fast.
+    data.insertRowsAfter(lastLedger, n);
+
+    // Inputs B..J for every line in one write. Charge lines store
+    // thickness/size/sheets/rate as 0 (keeps the column-E key non-blank).
+    data.getRange(start, 2, n, 9).setValues(quote.lines.map(function (l) {
       // Brand cell (F) carries the description too, only when one was entered.
       var brandCell = l.brand + (l.description ? ' - ' + l.description : '');
-      // Inputs only: B..J. Charge lines store thickness/size/sheets/rate as 0
-      // (keeps the column-E key non-blank and the ledger contiguous).
-      data.getRange(target, 2, 1, 9).setValues([[
-        vehicleDest, quoteNumber, quote.customer,
-        l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate
-      ]]);
+      return [vehicleDest, quoteNumber, quote.customer,
+              l.thickness_mm, brandCell, l.length_cm, l.breadth_cm, l.sheets, l.rate];
+    }));
 
-      // Write the sheet's own calc formulas explicitly (A key, m², rate/m²,
-      // handling, taxes, stock lookups, day-book totals). We do NOT clone a
-      // template row: recent quotes are stored as hardcoded values, and the
-      // sheet's own AC-column formula contains a #REF! — cloning either would
-      // corrupt the new rows. See ledgerFormulas_().
-      var f = ledgerFormulas_(target);
-      if (l.is_charge) { delete f[11]; delete f[12]; }  // K/L are entered literally
-      if (removeHandling) delete f[13];                 // M forced to 0
-      Object.keys(f).forEach(function (col) {
-        data.getRange(target, parseInt(col, 10)).setFormula(f[col]);
-      });
+    // Write the sheet's own calc formulas explicitly (A key, m², rate/m²,
+    // handling, taxes, stock lookups, day-book totals). We do NOT clone a
+    // template row: recent quotes are stored as hardcoded values, and the
+    // sheet's own AC-column formula contains a #REF! — cloning either would
+    // corrupt the new rows. See ledgerFormulas_().
+    var fRows = quote.lines.map(function (_, idx) { return ledgerFormulas_(start + idx); });
+    data.getRange(start, 1, n, 1).setFormulas(fRows.map(function (f) { return [f[1]]; }));
+    data.getRange(start, 11, n, 6).setFormulas(fRows.map(function (f) {
+      return [f[11], f[12], f[13], f[14], f[15], f[16]];
+    }));
+    data.getRange(start, 18, n, 11).setFormulas(fRows.map(function (f) {
+      return [f[18], f[19], f[20], f[21], f[22], f[23], f[24], f[25], f[26], f[27], f[28]];
+    }));
+    data.getRange(start, 30, n, 1).setFormulas(fRows.map(function (f) { return [f[30]]; }));
 
-      // Charge line: m² and Rate per m² (pretax) go straight into K and L.
-      if (l.is_charge) {
-        data.getRange(target, 11).setValue(l.m2);
-        data.getRange(target, 12).setValue(l.rate_m2);
-      }
-      // Handling removed: zero column M so N = K*L (no 1% added).
-      if (removeHandling) data.getRange(target, 13).setValue(0);
+    // AC ("count of this line within the quote") as a plain value — the sheet's
+    // own AC formula is broken (#REF!). 1 on the first line makes the P column
+    // show the invoice total once; >1 on later lines makes P = 0.
+    data.getRange(start, 29, n, 1).setValues(quote.lines.map(function (_, idx) {
+      return [idx === 0 ? 1 : 2];
+    }));
 
-      // AC ("count of this line within the quote") as a plain value — the
-      // sheet's own AC formula is broken (#REF!). 1 on the first line makes the
-      // P column show the invoice total once; >1 on later lines makes P = 0.
-      data.getRange(target, 29).setValue(idx === 0 ? 1 : 2);
+    // Literal overrides AFTER the formulas: charge lines carry their entered
+    // m² and Rate per m² in K/L; removing handling zeroes M so N = K*L.
+    quote.lines.forEach(function (l, idx) {
+      if (l.is_charge) data.getRange(start + idx, 11, 1, 2).setValues([[l.m2, l.rate_m2]]);
     });
+    if (removeHandling) {
+      data.getRange(start, 13, n, 1).setValues(quote.lines.map(function () { return [0]; }));
+    }
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
 
-  // Use the working "landscape"/"portrait" tabs (fetch-by-number via H4) — the
-  // same display you already use, which shows the line items correctly.
-  return exportQuoteByNumber_(quoteNumber, quote.lines.length, quote.customer);
+  // Return NOW so the page can show "Saved" in a second or two. The page then
+  // calls makeQuotePdf() for the export, which continues even if it takes long.
+  return {
+    quoteNumber: quoteNumber,
+    count: quote.lines.length,
+    customer: quote.customer,
+    orientation: quote.lines.length > LANDSCAPE_MAX_ITEMS ? 'portrait' : 'landscape'
+  };
+}
+
+/** Step 2, called by the page right after the save: export + email the PDF.
+ *  Kept separate so "Confirm & save" itself returns immediately. */
+function makeQuotePdf(quoteNumber, count, customer) {
+  return exportQuoteByNumber_(quoteNumber, count, customer);
 }
 
 /** Set the quote number into a lookup tab's H4, export it, then restore H4. */
