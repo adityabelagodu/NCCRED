@@ -244,10 +244,14 @@ function commitQuote(quote) {
     if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
     var removeHandling = !!quote.removeHandling;
 
-    // Column B carries the vehicle number / destination (NOT the date) — it is
-    // what the printed quote shows under the buyer's name.
-    var vehicleDest = [(quote.vehicle || '').trim(), (quote.destination || '').trim()]
-      .filter(function (s) { return s; }).join(' / ');
+    // Column B carries the vehicle number / destination (NOT the date) — the
+    // printed quote shows it under the buyer's name, as labelled lines:
+    //   Vehicle Number : KA05D5194
+    //   Destination : Madiwala
+    var vdParts = [];
+    if ((quote.vehicle || '').trim()) vdParts.push('Vehicle Number : ' + quote.vehicle.trim());
+    if ((quote.destination || '').trim()) vdParts.push('Destination : ' + quote.destination.trim());
+    var vehicleDest = vdParts.join('\n');
 
     var n = quote.lines.length;
     var start = lastLedger + 1;
@@ -353,6 +357,13 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
     var copy = tab.copyTo(temp);
     copy.getRange(1, 1, values.length, values[0].length).setValues(values);
     temp.deleteSheet(temp.getSheets()[0]); // the default empty Sheet1
+
+    // The vehicle/destination cell under the buyer (A10) can hold two labelled
+    // lines — let it wrap and give the row enough height to show both.
+    if (values.length > 9 && String(values[9][0]).indexOf('\n') >= 0) {
+      copy.getRange('A10').setWrap(true);
+      copy.setRowHeight(10, 44);
+    }
     SpreadsheetApp.flush();
 
     var fileName = 'Quote_' + quoteNumber + '_' + safeName_(customer) + '.pdf';
