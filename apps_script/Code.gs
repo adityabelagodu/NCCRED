@@ -596,11 +596,23 @@ function recentQuotes(limit) {
     if (!g.customer && r[2]) g.customer = String(r[2]);   // D
     var o = parseFloat(r[13]);                            // O
     if (!isNaN(o)) g.total += o;
+    // Full line label: size, sheets and rate too (not just brand/thickness).
     var brand = String(r[4] || '');                       // F
     var desc = String(r[15] || '');                       // Q
-    var label = isChargeBrand_(brand) ? brand : ((thk !== '' && thk !== null ? thk + 'mm ' : '') + brand);
+    var blank = function (v) { return v === '' || v === null || v === undefined; };
+    var label;
+    if (isChargeBrand_(brand)) {
+      label = brand;                                      // loading / transport
+      if (!blank(r[9])) label += ' ' + r[9] + 'm²';       // K m²
+      if (!blank(r[10])) label += ' @' + r[10];           // L rate per m²
+    } else {
+      label = (blank(thk) ? '' : thk + 'mm ') + brand;    // E thickness + F brand
+      if (!blank(r[5]) && !blank(r[6])) label += ' ' + r[5] + 'x' + r[6] + 'cm'; // G x H
+      if (!blank(r[7])) label += ' ' + r[7] + 'sh';       // I sheets
+      if (!blank(r[8])) label += ' @' + r[8];             // J rate
+    }
     if (desc) label += ' (' + desc + ')';
-    if (g.labels.length < 6) g.labels.push(label);
+    if (g.labels.length < 8) g.labels.push(label);
   }
   order.sort(function (a, b) { return b - a; }); // newest quote number first
   var lim = (limit && limit > 0) ? limit : order.length;
