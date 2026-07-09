@@ -462,6 +462,39 @@ function nextQuoteNumber_(dataSheet) {
   return max ? max + 1 : 1285;
 }
 
+/** Recent quotes for the on-screen history: newest first, one row per quote
+ *  number with its customer, line count and total (₹). Reads only the real
+ *  ledger (thickness-filled rows up to the ledger bottom). */
+function recentQuotes(limit) {
+  limit = limit || 25;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  if (!data) return [];
+  var bottom = lastLedgerRow_(data);
+  if (bottom < FIRST_DATA_ROW) return [];
+  // Columns C..O (3..15): C quote#, D customer, E thickness, … O invoice-after-tax.
+  var vals = data.getRange(FIRST_DATA_ROW, 3, bottom - FIRST_DATA_ROW + 1, 13).getValues();
+  var map = {}, order = [];
+  for (var i = 0; i < vals.length; i++) {
+    var q = parseInt(vals[i][0], 10);        // C
+    var thk = vals[i][2];                    // E — only real line rows have it
+    if (isNaN(q) || thk === '' || thk === null) continue;
+    if (!map[q]) { map[q] = { quote: q, customer: '', items: 0, total: 0 }; order.push(q); }
+    var g = map[q];
+    g.items++;
+    if (!g.customer && vals[i][1]) g.customer = String(vals[i][1]); // D
+    var o = parseFloat(vals[i][12]);         // O
+    if (!isNaN(o)) g.total += o;
+  }
+  order.sort(function (a, b) { return b - a; }); // newest quote number first
+  var out = [];
+  for (var k = 0; k < order.length && k < limit; k++) {
+    var e = map[order[k]];
+    out.push({ quote: e.quote, customer: e.customer, items: e.items, total: Math.round(e.total) });
+  }
+  return out;
+}
+
 function summariseQuote_(dataSheet, quoteNumber) {
   var last = dataSheet.getLastRow();
   var out = { count: 0, customer: '', date: '' };

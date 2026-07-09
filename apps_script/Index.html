@@ -33,6 +33,15 @@
     a.btnlink { display: block; text-align: center; background: #1a7f37; color: #fff;
                 text-decoration: none; padding: 12px; border-radius: 10px; margin-top: 10px; }
     hr { border: none; border-top: 1px dashed #ccc; margin: 26px 0; }
+    .histwrap { overflow-x: auto; }
+    table.hist { width: 100%; border-collapse: collapse; font-size: 14px;
+                 background: #fff; border: 1px solid #e6e0d4; border-radius: 12px; }
+    table.hist th, table.hist td { padding: 9px 10px; border-bottom: 1px solid #eee; text-align: left; }
+    table.hist th { background: #f0ebe0; font-size: 12px; color: #555; }
+    table.hist td.r, table.hist th.r { text-align: right; white-space: nowrap; }
+    table.hist td.q { font-weight: 700; }
+    table.hist tr:last-child td { border-bottom: none; }
+    table.hist tbody tr:active { background: #f4f1ea; }
   </style>
 </head>
 <body>
@@ -65,6 +74,14 @@
   <input id="reprintNum" inputmode="numeric" placeholder="e.g. 1284">
   <button class="secondary" onclick="doReprint()">Get PDF</button>
   <div id="reprintStatus" class="muted" style="margin-top:10px;"></div>
+
+  <hr>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h2 style="margin:0;">Quote history</h2>
+    <button class="secondary small" onclick="loadHistory()">Refresh</button>
+  </div>
+  <div class="sub">Newest first. Tap a row to make its PDF again.</div>
+  <div id="history" class="muted">Loading…</div>
 
 <script>
   var BRANDS = <?!= brandsJson ?>;
@@ -268,6 +285,7 @@
           '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.' +
           ' You can keep working meanwhile.</div></div>';
         lastPreview = null;
+        loadHistory(); // refresh the history list with the new quote
         google.script.run
           .withSuccessHandler(function (p) {
             var el = document.getElementById('pdfState');
@@ -298,7 +316,43 @@
       .reprintQuote(n);
   }
 
-  addItem(); // start with one item row
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function loadHistory() {
+    setBusy('history', 'Loading…');
+    google.script.run
+      .withSuccessHandler(showHistory)
+      .withFailureHandler(function (e) { setBusy('history', '<span class="err">' + e.message + '</span>'); })
+      .recentQuotes(25);
+  }
+
+  function showHistory(rows) {
+    if (!rows || !rows.length) { setBusy('history', 'No quotes yet.'); return; }
+    var h = '<div class="histwrap"><table class="hist"><thead><tr>' +
+            '<th>Quote #</th><th>Customer</th><th class="r">Items</th><th class="r">Total</th>' +
+            '</tr></thead><tbody>';
+    rows.forEach(function (q) {
+      h += '<tr onclick="reprintFromHistory(' + q.quote + ')">' +
+           '<td class="q">' + q.quote + '</td>' +
+           '<td>' + esc(q.customer) + '</td>' +
+           '<td class="r">' + q.items + '</td>' +
+           '<td class="r">&#8377;' + money(q.total) + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+    document.getElementById('history').innerHTML = h;
+  }
+
+  function reprintFromHistory(n) {
+    document.getElementById('reprintNum').value = n;
+    doReprint();
+    var el = document.getElementById('reprintStatus');
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  addItem();     // start with one item row
+  loadHistory(); // show the quote history at the bottom
 </script>
 </body>
 </html>
