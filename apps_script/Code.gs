@@ -242,66 +242,9 @@ function commitQuote(quote) {
   try {
     var lastLedger = lastLedgerRow_(data);
     if (lastLedger < FIRST_DATA_ROW) lastLedger = FIRST_DATA_ROW - 1;
-    var removeHandling = !!quote.removeHandling;
-
-    // Column B carries the vehicle number / destination (NOT the date) — the
-    // printed quote shows it under the buyer's name, as labelled lines:
-    //   Vehicle Number : KA05D5194
-    //   Destination : Madiwala
-    var vdParts = [];
-    if ((quote.vehicle || '').trim()) vdParts.push('Vehicle Number : ' + quote.vehicle.trim());
-    if ((quote.destination || '').trim()) vdParts.push('Destination : ' + quote.destination.trim());
-    var vehicleDest = vdParts.join('\n');
-
-    var n = quote.lines.length;
     var start = lastLedger + 1;
-
-    // Batched writes (one call per block, not per cell) so saving is fast.
-    data.insertRowsAfter(lastLedger, n);
-
-    // Inputs B..J for every line in one write. Charge lines store
-    // thickness/size/sheets/rate as 0 (keeps the column-E key non-blank).
-    data.getRange(start, 2, n, 9).setValues(quote.lines.map(function (l) {
-      return [vehicleDest, quoteNumber, quote.customer,
-              l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate];
-    }));
-
-    // Additional description goes to column Q (17) — the print tabs read it
-    // from there ("Additional Description in Item", shown only when filled).
-    data.getRange(start, 17, n, 1).setValues(quote.lines.map(function (l) {
-      return [l.description || ''];
-    }));
-
-    // Write the sheet's own calc formulas explicitly (A key, m², rate/m²,
-    // handling, taxes, stock lookups, day-book totals). We do NOT clone a
-    // template row: recent quotes are stored as hardcoded values, and the
-    // sheet's own AC-column formula contains a #REF! — cloning either would
-    // corrupt the new rows. See ledgerFormulas_().
-    var fRows = quote.lines.map(function (_, idx) { return ledgerFormulas_(start + idx); });
-    data.getRange(start, 1, n, 1).setFormulas(fRows.map(function (f) { return [f[1]]; }));
-    data.getRange(start, 11, n, 6).setFormulas(fRows.map(function (f) {
-      return [f[11], f[12], f[13], f[14], f[15], f[16]];
-    }));
-    data.getRange(start, 18, n, 11).setFormulas(fRows.map(function (f) {
-      return [f[18], f[19], f[20], f[21], f[22], f[23], f[24], f[25], f[26], f[27], f[28]];
-    }));
-    data.getRange(start, 30, n, 1).setFormulas(fRows.map(function (f) { return [f[30]]; }));
-
-    // AC ("count of this line within the quote") as a plain value — the sheet's
-    // own AC formula is broken (#REF!). 1 on the first line makes the P column
-    // show the invoice total once; >1 on later lines makes P = 0.
-    data.getRange(start, 29, n, 1).setValues(quote.lines.map(function (_, idx) {
-      return [idx === 0 ? 1 : 2];
-    }));
-
-    // Literal overrides AFTER the formulas: charge lines carry their entered
-    // m² and Rate per m² in K/L; removing handling zeroes M so N = K*L.
-    quote.lines.forEach(function (l, idx) {
-      if (l.is_charge) data.getRange(start + idx, 11, 1, 2).setValues([[l.m2, l.rate_m2]]);
-    });
-    if (removeHandling) {
-      data.getRange(start, 13, n, 1).setValues(quote.lines.map(function () { return [0]; }));
-    }
+    data.insertRowsAfter(lastLedger, quote.lines.length);
+    writeQuoteRows_(data, start, quoteNumber, quote);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
@@ -309,6 +252,173 @@ function commitQuote(quote) {
 
   // Return NOW so the page can show "Saved" in a second or two. The page then
   // calls makeQuotePdf() for the export, which continues even if it takes long.
+  return {
+    quoteNumber: quoteNumber,
+    count: quote.lines.length,
+    customer: quote.customer,
+    orientation: quote.lines.length > LANDSCAPE_MAX_ITEMS ? 'portrait' : 'landscape'
+  };
+}
+
+/** Write one quote's lines into rows start..start+n-1 (which must already exist
+ *  blank). Shared by commitQuote (new) and updateQuote (edit). */
+function writeQuoteRows_(data, start, quoteNumber, quote) {
+  var removeHandling = !!quote.removeHandling;
+  var n = quote.lines.length;
+
+  // Column B carries the vehicle number / destination (NOT the date) — the
+  // printed quote shows it under the buyer's name, as labelled lines:
+  //   Vehicle Number : KA05D5194
+  //   Destination : Madiwala
+  var vdParts = [];
+  if ((quote.vehicle || '').trim()) vdParts.push('Vehicle Number : ' + quote.vehicle.trim());
+  if ((quote.destination || '').trim()) vdParts.push('Destination : ' + quote.destination.trim());
+  var vehicleDest = vdParts.join('\n');
+
+  // Inputs B..J. Charge lines store thickness/size/sheets/rate as 0.
+  data.getRange(start, 2, n, 9).setValues(quote.lines.map(function (l) {
+    return [vehicleDest, quoteNumber, quote.customer,
+            l.thickness_mm, l.brand, l.length_cm, l.breadth_cm, l.sheets, l.rate];
+  }));
+
+  // Additional description -> column Q (17); the print tabs read it from there.
+  data.getRange(start, 17, n, 1).setValues(quote.lines.map(function (l) {
+    return [l.description || ''];
+  }));
+
+  // The sheet's own calc formulas, written explicitly (see ledgerFormulas_).
+  var fRows = quote.lines.map(function (_, idx) { return ledgerFormulas_(start + idx); });
+  data.getRange(start, 1, n, 1).setFormulas(fRows.map(function (f) { return [f[1]]; }));
+  data.getRange(start, 11, n, 6).setFormulas(fRows.map(function (f) {
+    return [f[11], f[12], f[13], f[14], f[15], f[16]];
+  }));
+  data.getRange(start, 18, n, 11).setFormulas(fRows.map(function (f) {
+    return [f[18], f[19], f[20], f[21], f[22], f[23], f[24], f[25], f[26], f[27], f[28]];
+  }));
+  data.getRange(start, 30, n, 1).setFormulas(fRows.map(function (f) { return [f[30]]; }));
+
+  // AC as a plain value (sheet's own AC formula is a #REF!): 1 on line 1 so P
+  // shows the invoice total once; >1 on later lines makes P = 0.
+  data.getRange(start, 29, n, 1).setValues(quote.lines.map(function (_, idx) {
+    return [idx === 0 ? 1 : 2];
+  }));
+
+  // Literal overrides AFTER the formulas: charge lines carry entered m²/rate in
+  // K/L; removing handling zeroes M so N = K*L.
+  quote.lines.forEach(function (l, idx) {
+    if (l.is_charge) data.getRange(start + idx, 11, 1, 2).setValues([[l.m2, l.rate_m2]]);
+  });
+  if (removeHandling) {
+    data.getRange(start, 13, n, 1).setValues(quote.lines.map(function () { return [0]; }));
+  }
+}
+
+/** First row and line count of an existing quote's block in the ledger. */
+function findQuoteRows_(data, quoteNumber) {
+  var bottom = lastLedgerRow_(data);
+  if (bottom < FIRST_DATA_ROW) return { firstRow: 0, count: 0 };
+  var n = bottom - FIRST_DATA_ROW + 1;
+  var c = data.getRange(FIRST_DATA_ROW, 3, n, 1).getValues(); // C quote#
+  var e = data.getRange(FIRST_DATA_ROW, 5, n, 1).getValues(); // E thickness (real lines only)
+  var first = 0, count = 0;
+  for (var i = 0; i < n; i++) {
+    var q = parseInt(c[i][0], 10);
+    var filled = (e[i][0] !== '' && e[i][0] !== null);
+    if (q === quoteNumber && filled) {
+      if (!first) first = FIRST_DATA_ROW + i;
+      count++;
+    } else if (first) {
+      break; // contiguous block ended
+    }
+  }
+  return { firstRow: first, count: count };
+}
+
+/** Load an existing quote's fields so the page can edit it. */
+function loadQuote(quoteNumber) {
+  quoteNumber = parseInt(quoteNumber, 10);
+  if (!quoteNumber) throw new Error('Enter a quote number.');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  if (!data) throw new Error('Tab "' + DATA_TAB + '" not found.');
+  var loc = findQuoteRows_(data, quoteNumber);
+  if (!loc.count) throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
+
+  // B..Q (2..17): 0 B(vehicle/dest) 2 D(customer) 3 E(thk) 4 F(brand) 5 G 6 H
+  // 7 I 8 J(rate) 9 K(m²) 10 L(rate/m²) 11 M(handling) 15 Q(description).
+  var vals = data.getRange(loc.firstRow, 2, loc.count, 16).getValues();
+
+  var vehicle = '', destination = '';
+  String(vals[0][0] || '').split('\n').forEach(function (ln) {
+    var t = ln.trim();
+    if (/^vehicle number\s*:/i.test(t)) vehicle = t.replace(/^vehicle number\s*:/i, '').trim();
+    else if (/^destination\s*:/i.test(t)) destination = t.replace(/^destination\s*:/i, '').trim();
+  });
+
+  var removeHandling = false;
+  var items = [];
+  for (var i = 0; i < vals.length; i++) {
+    var r = vals[i];
+    var brand = String(r[4] || '');
+    var charge = isChargeBrand_(brand);
+    var num = function (v) { var x = parseFloat(v); return isNaN(x) ? 0 : x; };
+    if (!charge) {
+      var area = (num(r[5]) / 100) * (num(r[6]) / 100) * num(r[7]);
+      var base = area * (num(r[3]) * num(r[8]) * 0.84746);
+      var mv = r[11];
+      var mn = (typeof mv === 'number') ? mv : parseFloat(mv);
+      if (base > 0 && mv !== '' && mv !== null && !isNaN(mn) && mn === 0) removeHandling = true;
+    }
+    items.push({
+      is_charge: charge,
+      brand: brand,
+      thickness: charge ? '' : String(r[3] === null ? '' : r[3]),
+      length:    charge ? '' : String(r[5] === null ? '' : r[5]),
+      breadth:   charge ? '' : String(r[6] === null ? '' : r[6]),
+      sheets:    charge ? '' : String(r[7] === null ? '' : r[7]),
+      rate:      charge ? '' : String(r[8] === null ? '' : r[8]),
+      m2:        charge ? String(r[9] === null ? '' : r[9]) : '',
+      rate_m2:   charge ? String(r[10] === null ? '' : r[10]) : '',
+      description: String(r[15] || '')
+    });
+  }
+
+  return {
+    quoteNumber: quoteNumber,
+    customer: String(vals[0][2] || ''),
+    vehicle: vehicle,
+    destination: destination,
+    removeHandling: removeHandling,
+    items: items
+  };
+}
+
+/** Save an EDITED quote back onto its own number, in its own place. */
+function updateQuote(quote) {
+  if (!quote || !quote.lines || !quote.lines.length) throw new Error('Nothing to update.');
+  var quoteNumber = parseInt(quote.quoteNumber, 10);
+  if (!quoteNumber) throw new Error('No quote number to update.');
+  if (quote.missing && quote.missing.length) {
+    throw new Error('Add rates for: ' + quote.missing.join(', '));
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  if (!data) throw new Error('Tab "' + DATA_TAB + '" not found.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var loc = findQuoteRows_(data, quoteNumber);
+    if (!loc.count) throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
+    // Replace the old block with the new lines, keeping the same position.
+    data.deleteRows(loc.firstRow, loc.count);
+    data.insertRowsAfter(loc.firstRow - 1, quote.lines.length);
+    writeQuoteRows_(data, loc.firstRow, quoteNumber, quote);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+
   return {
     quoteNumber: quoteNumber,
     count: quote.lines.length,
@@ -462,35 +572,45 @@ function nextQuoteNumber_(dataSheet) {
   return max ? max + 1 : 1285;
 }
 
-/** Recent quotes for the on-screen history: newest first, one row per quote
- *  number with its customer, line count and total (₹). Reads only the real
- *  ledger (thickness-filled rows up to the ledger bottom). */
+/** Quotes for the on-screen history: newest first, one row per quote number
+ *  with its customer, item count, total (₹) and a short items summary (brands,
+ *  thickness and any additional description). Reads only the real ledger.
+ *  limit <= 0 returns them all (for "view older quotes"). */
 function recentQuotes(limit) {
-  limit = limit || 25;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var data = ss.getSheetByName(DATA_TAB);
   if (!data) return [];
   var bottom = lastLedgerRow_(data);
   if (bottom < FIRST_DATA_ROW) return [];
-  // Columns C..O (3..15): C quote#, D customer, E thickness, … O invoice-after-tax.
-  var vals = data.getRange(FIRST_DATA_ROW, 3, bottom - FIRST_DATA_ROW + 1, 13).getValues();
+  // B..Q (2..17): 1 C(quote#) 2 D(customer) 3 E(thk) 4 F(brand) 13 O(invoice) 15 Q(desc).
+  var vals = data.getRange(FIRST_DATA_ROW, 2, bottom - FIRST_DATA_ROW + 1, 16).getValues();
   var map = {}, order = [];
   for (var i = 0; i < vals.length; i++) {
-    var q = parseInt(vals[i][0], 10);        // C
-    var thk = vals[i][2];                    // E — only real line rows have it
+    var r = vals[i];
+    var q = parseInt(r[1], 10);              // C
+    var thk = r[3];                          // E — only real line rows have it
     if (isNaN(q) || thk === '' || thk === null) continue;
-    if (!map[q]) { map[q] = { quote: q, customer: '', items: 0, total: 0 }; order.push(q); }
+    if (!map[q]) { map[q] = { quote: q, customer: '', items: 0, total: 0, labels: [] }; order.push(q); }
     var g = map[q];
     g.items++;
-    if (!g.customer && vals[i][1]) g.customer = String(vals[i][1]); // D
-    var o = parseFloat(vals[i][12]);         // O
+    if (!g.customer && r[2]) g.customer = String(r[2]);   // D
+    var o = parseFloat(r[13]);                            // O
     if (!isNaN(o)) g.total += o;
+    var brand = String(r[4] || '');                       // F
+    var desc = String(r[15] || '');                       // Q
+    var label = isChargeBrand_(brand) ? brand : ((thk !== '' && thk !== null ? thk + 'mm ' : '') + brand);
+    if (desc) label += ' (' + desc + ')';
+    if (g.labels.length < 6) g.labels.push(label);
   }
   order.sort(function (a, b) { return b - a; }); // newest quote number first
+  var lim = (limit && limit > 0) ? limit : order.length;
   var out = [];
-  for (var k = 0; k < order.length && k < limit; k++) {
+  for (var k = 0; k < order.length && k < lim; k++) {
     var e = map[order[k]];
-    out.push({ quote: e.quote, customer: e.customer, items: e.items, total: Math.round(e.total) });
+    out.push({
+      quote: e.quote, customer: e.customer, items: e.items,
+      total: Math.round(e.total), summary: e.labels.join(', ')
+    });
   }
   return out;
 }

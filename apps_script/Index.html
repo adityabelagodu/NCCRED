@@ -48,6 +48,8 @@
   <h1>Rachna Enterprises - Quote</h1>
   <div class="sub">Fill the items, preview, then save. No typing of full sentences.</div>
 
+  <div id="editBanner" class="card" style="display:none;background:#fff7ec;border-color:#e8c9a0;"></div>
+
   <label>Customer name</label>
   <input id="customer" placeholder="e.g. Mithul Fab">
 
@@ -80,13 +82,19 @@
     <h2 style="margin:0;">Quote history</h2>
     <button class="secondary small" onclick="loadHistory()">Refresh</button>
   </div>
-  <div class="sub">Newest first. Tap a row to make its PDF again.</div>
-  <div id="history" class="muted">Loading…</div>
+  <div class="sub">Newest first. <b>PDF</b> re-prints, <b>Edit</b> changes a quote.</div>
+  <input id="histSearch" placeholder="Search by quote number or customer" oninput="renderHistory()">
+  <div id="history" class="muted" style="margin-top:10px;">Loading…</div>
+  <button id="histMore" class="secondary small" style="display:none;" onclick="showMoreHistory()">Show older</button>
 
 <script>
   var BRANDS = <?!= brandsJson ?>;
   var itemCount = 0;
   var lastPreview = null;
+  var editingQuote = null;   // quote number being edited, or null for a new quote
+  var allHistory = [];       // full history from the server
+  var historyShown = 25;     // how many rows currently rendered
+  var HISTORY_PAGE = 25;
 
   function brandOptions() {
     var s = '<option value="">— choose —</option>';
@@ -265,8 +273,12 @@
     }
     html += '</div>';
     if (q.ok) {
-      html += '<button onclick="doCommit()">Confirm &amp; save + PDF (' +
-              (q.lines.length > 8 ? 'portrait' : 'landscape') + ')</button>';
+      if (editingQuote) {
+        html += '<button onclick="doUpdate()">Update quote #' + editingQuote + ' + PDF</button>';
+      } else {
+        html += '<button onclick="doCommit()">Confirm &amp; save + PDF (' +
+                (q.lines.length > 8 ? 'portrait' : 'landscape') + ')</button>';
+      }
     }
     document.getElementById('preview').innerHTML = html;
   }
@@ -316,35 +328,167 @@
       .reprintQuote(n);
   }
 
+  // ---- Edit an existing quote --------------------------------------------
+  function doUpdate() {
+    if (!lastPreview) return;
+    var num = editingQuote;
+    setBusy('status', 'Updating…');
+    document.querySelectorAll('#preview button').forEach(function (b) { b.disabled = true; });
+    lastPreview.quoteNumber = num;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        setBusy('status', '');
+        document.getElementById('preview').innerHTML =
+          '<div class="card"><div class="ok">Updated quote #' + res.quoteNumber +
+          ' (' + res.orientation + ').</div>' +
+          '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.</div></div>';
+        lastPreview = null;
+        editingQuote = null;
+        updateModeUI();
+        loadHistory();
+        google.script.run
+          .withSuccessHandler(function (p) {
+            var el = document.getElementById('pdfState');
+            if (el) el.outerHTML = '<a class="btnlink" href="' + p.link + '" target="_blank">Open PDF</a>';
+          })
+          .withFailureHandler(function (e) {
+            var el = document.getElementById('pdfState');
+            if (el) el.innerHTML = '<span class="err">' + e.message + '</span>';
+          })
+          .makeQuotePdf(res.quoteNumber, res.count, res.customer);
+      })
+      .withFailureHandler(function (e) {
+        setBusy('status', '<span class="err">' + e.message + '</span>');
+        document.querySelectorAll('#preview button').forEach(function (b) { b.disabled = false; });
+      })
+      .updateQuote(lastPreview);
+  }
+
+  function editHistory(n) {
+    setBusy('status', 'Loading quote #' + n + '…');
+    document.getElementById('preview').innerHTML = '';
+    google.script.run
+      .withSuccessHandler(function (q) {
+        setBusy('status', '');
+        editingQuote = q.quoteNumber;
+        document.getElementById('customer').value = q.customer || '';
+        document.getElementById('vehicle').value = q.vehicle || '';
+        document.getElementById('destination').value = q.destination || '';
+        document.getElementById('noHandling').checked = !!q.removeHandling;
+        document.getElementById('items').innerHTML = '';
+        itemCount = 0;
+        (q.items || []).forEach(function (it) { addItem(); fillLastItem(it); });
+        if (!q.items || !q.items.length) addItem();
+        updateModeUI();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      })
+      .withFailureHandler(function (e) { setBusy('status', '<span class="err">' + e.message + '</span>'); })
+      .loadQuote(n);
+  }
+
+  function fillLastItem(it) {
+    var cards = document.querySelectorAll('.item');
+    var el = cards[cards.length - 1];
+    var sel = el.querySelector('.it-brand');
+    var brand = it.brand || '';
+    var found = false;
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === brand) { sel.value = brand; found = true; break; }
+    }
+    if (!found && brand) {
+      sel.value = '__other__';
+      var o = el.querySelector('.it-brand-other');
+      o.style.display = 'block';
+      o.value = brand;
+    } else if (!brand) {
+      sel.value = '';
+    }
+    applyMode(el);
+    if (it.is_charge) {
+      el.querySelector('.it-m2').value = it.m2 || '';
+      el.querySelector('.it-ratem2').value = it.rate_m2 || '';
+    } else {
+      el.querySelector('.it-thk').value = it.thickness || '';
+      el.querySelector('.it-len').value = it.length || '';
+      el.querySelector('.it-brd').value = it.breadth || '';
+      el.querySelector('.it-sheets').value = it.sheets || '';
+      el.querySelector('.it-rate').value = it.rate || '';
+    }
+    el.querySelector('.it-desc').value = it.description || '';
+  }
+
+  function updateModeUI() {
+    var b = document.getElementById('editBanner');
+    if (editingQuote) {
+      b.style.display = 'block';
+      b.innerHTML = '<b>Editing quote #' + editingQuote + '</b> — change it, Preview, then Update. ' +
+        '<button class="secondary small" onclick="cancelEdit()">Start a new quote instead</button>';
+      document.getElementById('previewBtn').textContent = 'Preview changes';
+    } else {
+      b.style.display = 'none';
+      document.getElementById('previewBtn').textContent = 'Preview quote';
+    }
+  }
+
+  function cancelEdit() { editingQuote = null; resetForm(); updateModeUI(); }
+
+  function resetForm() {
+    document.getElementById('customer').value = '';
+    document.getElementById('vehicle').value = '';
+    document.getElementById('destination').value = '';
+    document.getElementById('noHandling').checked = false;
+    document.getElementById('items').innerHTML = '';
+    itemCount = 0;
+    addItem();
+    document.getElementById('preview').innerHTML = '';
+    setBusy('status', '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ---- Quote history ------------------------------------------------------
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function loadHistory() {
     setBusy('history', 'Loading…');
+    document.getElementById('histMore').style.display = 'none';
     google.script.run
-      .withSuccessHandler(showHistory)
+      .withSuccessHandler(function (rows) { allHistory = rows || []; historyShown = HISTORY_PAGE; renderHistory(); })
       .withFailureHandler(function (e) { setBusy('history', '<span class="err">' + e.message + '</span>'); })
-      .recentQuotes(25);
+      .recentQuotes(0); // 0 = all
   }
 
-  function showHistory(rows) {
-    if (!rows || !rows.length) { setBusy('history', 'No quotes yet.'); return; }
+  function renderHistory() {
+    var term = (document.getElementById('histSearch').value || '').trim().toLowerCase();
+    var filtered = allHistory.filter(function (q) {
+      if (!term) return true;
+      return String(q.quote).indexOf(term) >= 0 || (q.customer || '').toLowerCase().indexOf(term) >= 0;
+    });
+    var more = document.getElementById('histMore');
+    if (!filtered.length) { setBusy('history', term ? 'No matching quotes.' : 'No quotes yet.'); more.style.display = 'none'; return; }
+    if (historyShown < HISTORY_PAGE) historyShown = HISTORY_PAGE;
+    var shown = filtered.slice(0, historyShown);
     var h = '<div class="histwrap"><table class="hist"><thead><tr>' +
-            '<th>Quote #</th><th>Customer</th><th class="r">Items</th><th class="r">Total</th>' +
+            '<th>#</th><th>Customer / items</th><th class="r">Total</th><th></th>' +
             '</tr></thead><tbody>';
-    rows.forEach(function (q) {
-      h += '<tr onclick="reprintFromHistory(' + q.quote + ')">' +
-           '<td class="q">' + q.quote + '</td>' +
-           '<td>' + esc(q.customer) + '</td>' +
-           '<td class="r">' + q.items + '</td>' +
-           '<td class="r">&#8377;' + money(q.total) + '</td></tr>';
+    shown.forEach(function (q) {
+      h += '<tr><td class="q">' + q.quote + '</td>' +
+           '<td>' + esc(q.customer) + (q.summary ? '<div class="muted">' + esc(q.summary) + '</div>' : '') + '</td>' +
+           '<td class="r">&#8377;' + money(q.total) + '</td>' +
+           '<td class="r" style="white-space:nowrap;">' +
+           '<button class="secondary small" style="margin:0 0 4px;" onclick="pdfHistory(' + q.quote + ')">PDF</button> ' +
+           '<button class="secondary small" style="margin:0;" onclick="editHistory(' + q.quote + ')">Edit</button>' +
+           '</td></tr>';
     });
     h += '</tbody></table></div>';
     document.getElementById('history').innerHTML = h;
+    more.style.display = (filtered.length > historyShown) ? 'block' : 'none';
   }
 
-  function reprintFromHistory(n) {
+  function showMoreHistory() { historyShown += HISTORY_PAGE; renderHistory(); }
+
+  function pdfHistory(n) {
     document.getElementById('reprintNum').value = n;
     doReprint();
     var el = document.getElementById('reprintStatus');
