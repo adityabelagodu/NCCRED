@@ -51,7 +51,9 @@
   <div id="editBanner" class="card" style="display:none;background:#fff7ec;border-color:#e8c9a0;"></div>
 
   <label>Customer name</label>
-  <input id="customer" placeholder="e.g. Mithul Fab">
+  <input id="customer" list="customerList" placeholder="search or type a name…" autocomplete="off">
+  <datalist id="customerList"></datalist>
+  <datalist id="brandList"></datalist>
 
   <label>Vehicle number (optional)</label>
   <input id="vehicle" placeholder="e.g. KA53AA8068">
@@ -89,6 +91,7 @@
 
 <script>
   var BRANDS = <?!= brandsJson ?>;
+  var CUSTOMERS = <?!= customersJson ?>;
   var itemCount = 0;
   var lastPreview = null;
   var editingQuote = null;   // quote number being edited, or null for a new quote
@@ -96,11 +99,12 @@
   var historyShown = 25;     // how many rows currently rendered
   var HISTORY_PAGE = 25;
 
-  function brandOptions() {
-    var s = '<option value="">— choose —</option>';
-    BRANDS.forEach(function (b) { s += '<option value="' + b + '">' + b + '</option>'; });
-    s += '<option value="__other__">✎ type my own…</option>';
-    return s;
+  // Fill a <datalist> with options (search suggestions; user can still type own).
+  function fillDatalist(id, arr) {
+    var dl = document.getElementById(id);
+    dl.innerHTML = (arr || []).map(function (x) {
+      return '<option value="' + String(x).replace(/"/g, '&quot;') + '">';
+    }).join('');
   }
 
   // A loading / transport line is priced by m² × rate, not by glass dimensions.
@@ -123,9 +127,8 @@
         '<label>Thickness (mm)</label>' +
         '<input class="it-thk" inputmode="decimal" placeholder="4" onchange="checkStock(this)">' +
       '</div>' +
-      '<label>Brand / type</label>' +
-      '<select class="it-brand" onchange="onBrandChange(this)">' + brandOptions() + '</select>' +
-      '<input class="it-brand-other" placeholder="type the brand / type" style="display:none;margin-top:6px;" onchange="onOtherBrand(this)">' +
+      '<label>Brand / type (search or type)</label>' +
+      '<input class="it-brand" list="brandList" placeholder="e.g. sg, loading…" autocomplete="off" onchange="onBrandInput(this)">' +
       '<div class="glass-fields">' +
         '<label>Length (cm)</label>' +
         '<input class="it-len" inputmode="decimal" placeholder="244" onchange="checkStock(this)">' +
@@ -148,11 +151,9 @@
     document.getElementById('items').appendChild(div);
   }
 
-  // Brand value: the dropdown choice, or the typed text if "type my own".
+  // Brand value: whatever is in the search/type box.
   function brandOf(el) {
-    var sel = el.querySelector('.it-brand').value;
-    if (sel === '__other__') return el.querySelector('.it-brand-other').value.trim();
-    return sel;
+    return el.querySelector('.it-brand').value.trim();
   }
 
   // Show glass fields or charge (m²/rate) fields depending on the brand.
@@ -165,16 +166,7 @@
     if (charge) el.querySelector('.stock').innerHTML = '';
   }
 
-  function onBrandChange(node) {
-    var el = node.closest('.item');
-    var other = el.querySelector('.it-brand-other');
-    if (node.value === '__other__') { other.style.display = 'block'; other.focus(); }
-    else { other.style.display = 'none'; }
-    applyMode(el);
-    if (!isChargeBrand(brandOf(el))) checkStock(node);
-  }
-
-  function onOtherBrand(node) {
+  function onBrandInput(node) {
     var el = node.closest('.item');
     applyMode(el);
     if (!isChargeBrand(brandOf(el))) checkStock(node);
@@ -389,20 +381,7 @@
   function fillLastItem(it) {
     var cards = document.querySelectorAll('.item');
     var el = cards[cards.length - 1];
-    var sel = el.querySelector('.it-brand');
-    var brand = it.brand || '';
-    var found = false;
-    for (var i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === brand) { sel.value = brand; found = true; break; }
-    }
-    if (!found && brand) {
-      sel.value = '__other__';
-      var o = el.querySelector('.it-brand-other');
-      o.style.display = 'block';
-      o.value = brand;
-    } else if (!brand) {
-      sel.value = '';
-    }
+    el.querySelector('.it-brand').value = it.brand || '';
     applyMode(el);
     if (it.is_charge) {
       el.querySelector('.it-m2').value = it.m2 || '';
@@ -495,6 +474,8 @@
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  fillDatalist('brandList', BRANDS);       // stock-item suggestions
+  fillDatalist('customerList', CUSTOMERS); // customer suggestions
   addItem();     // start with one item row
   loadHistory(); // show the quote history at the bottom
 </script>

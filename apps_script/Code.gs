@@ -59,9 +59,39 @@ function isChargeBrand_(brand) {
 function doGet() {
   var t = HtmlService.createTemplateFromFile('Index');
   t.brandsJson = JSON.stringify(BRANDS);
+  t.customersJson = JSON.stringify(customerList_());
   return t.evaluate()
     .setTitle('Rachna Quote')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Customer suggestions for the search dropdown: everyone already quoted
+ *  (QUOTATIONS column D) plus, if present, a "Customers" tab (column A) — paste
+ *  your Tally Sundry Debtors export there. De-duplicated, sorted A→Z. */
+function customerList_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var seen = {}, out = [];
+  var add = function (v) {
+    var s = String(v == null ? '' : v).trim();
+    if (!s) return;
+    var k = s.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = 1; out.push(s);
+  };
+  var ctab = ss.getSheetByName('Customers');
+  if (ctab && ctab.getLastRow() >= 1) {
+    ctab.getRange(1, 1, ctab.getLastRow(), 1).getValues().forEach(function (r) { add(r[0]); });
+  }
+  var data = ss.getSheetByName(DATA_TAB);
+  if (data) {
+    var bottom = lastLedgerRow_(data);
+    if (bottom >= FIRST_DATA_ROW) {
+      data.getRange(FIRST_DATA_ROW, 4, bottom - FIRST_DATA_ROW + 1, 1)
+        .getValues().forEach(function (r) { add(r[0]); });
+    }
+  }
+  out.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  return out;
 }
 
 // ---- Rates (optional "Rates" tab) ------------------------------------------
