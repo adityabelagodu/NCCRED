@@ -60,9 +60,31 @@ function doGet() {
   var t = HtmlService.createTemplateFromFile('Index');
   t.brandsJson = JSON.stringify(BRANDS);
   t.customersJson = JSON.stringify(customerList_());
+  t.customerInfoJson = JSON.stringify(customerInfo_());
   return t.evaluate()
     .setTitle('Rachna Quote')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Address (Customers col B) and GSTIN (col C) keyed by lower-cased name, so the
+ *  form can show them under the customer field to confirm while quoting. */
+function customerInfo_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ctab = ss.getSheetByName('Customers');
+  var info = {};
+  if (!ctab || ctab.getLastRow() < 1) return info;
+  var vals = ctab.getRange(1, 1, ctab.getLastRow(), 3).getValues(); // A name, B address, C GSTIN
+  vals.forEach(function (r) {
+    var name = String(r[0] == null ? '' : r[0]).trim();
+    if (!name) return;
+    var k = name.toLowerCase();
+    if (info[k]) return; // first entry for a name wins
+    info[k] = {
+      address: String(r[1] == null ? '' : r[1]).trim(),
+      gstin: String(r[2] == null ? '' : r[2]).trim()
+    };
+  });
+  return info;
 }
 
 /** Customer suggestions for the search dropdown: everyone already quoted

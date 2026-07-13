@@ -51,9 +51,10 @@
   <div id="editBanner" class="card" style="display:none;background:#fff7ec;border-color:#e8c9a0;"></div>
 
   <label>Customer name</label>
-  <input id="customer" list="customerList" placeholder="search or type a name…" autocomplete="off">
+  <input id="customer" list="customerList" placeholder="search or type a name…" autocomplete="off" oninput="showCustomerInfo()">
   <datalist id="customerList"></datalist>
   <datalist id="brandList"></datalist>
+  <div id="custInfo" class="muted" style="margin-top:6px;"></div>
 
   <label>Vehicle number (optional)</label>
   <input id="vehicle" placeholder="e.g. KA53AA8068">
@@ -92,6 +93,7 @@
 <script>
   var BRANDS = <?!= brandsJson ?>;
   var CUSTOMERS = <?!= customersJson ?>;
+  var CUSTOMER_INFO = <?!= customerInfoJson ?>;
   var itemCount = 0;
   var lastPreview = null;
   var editingQuote = null;   // quote number being edited, or null for a new quote
@@ -105,6 +107,19 @@
     dl.innerHTML = (arr || []).map(function (x) {
       return '<option value="' + String(x).replace(/"/g, '&quot;') + '">';
     }).join('');
+  }
+
+  // Show the picked customer's address + GSTIN (from the Customers tab) under
+  // the name field, to confirm while quoting. Nothing shown for new customers.
+  function showCustomerInfo() {
+    var name = document.getElementById('customer').value.trim().toLowerCase();
+    var box = document.getElementById('custInfo');
+    var info = CUSTOMER_INFO[name];
+    if (!info || (!info.address && !info.gstin)) { box.innerHTML = ''; return; }
+    var parts = [];
+    if (info.address) parts.push('<b>Address:</b> ' + esc(info.address));
+    if (info.gstin) parts.push('<b>GSTIN:</b> ' + esc(info.gstin));
+    box.innerHTML = parts.join('<br>');
   }
 
   // A loading / transport line is priced by m² × rate, not by glass dimensions.
@@ -364,6 +379,7 @@
         setBusy('status', '');
         editingQuote = q.quoteNumber;
         document.getElementById('customer').value = q.customer || '';
+        showCustomerInfo();
         document.getElementById('vehicle').value = q.vehicle || '';
         document.getElementById('destination').value = q.destination || '';
         document.getElementById('noHandling').checked = !!q.removeHandling;
@@ -413,6 +429,7 @@
 
   function resetForm() {
     document.getElementById('customer').value = '';
+    showCustomerInfo();
     document.getElementById('vehicle').value = '';
     document.getElementById('destination').value = '';
     document.getElementById('noHandling').checked = false;
