@@ -91,10 +91,19 @@
   <datalist id="godownList"></datalist>
   <label>Number of print copies</label>
   <input id="tb-copies" inputmode="numeric" value="1">
+  <label>E-invoice</label>
+  <select id="tb-einv">
+    <option value="auto">Auto — B2B if customer has GSTIN</option>
+    <option value="yes">Yes — B2B, generate e-invoice</option>
+    <option value="no">No — B2C bill</option>
+  </select>
+  <div class="muted" style="margin-top:4px;">Printing / saving happens ONLY after the
+    e-invoice is generated. B2C bills skip the e-invoice.</div>
   <label style="display:flex;align-items:center;gap:10px;font-weight:600;margin-top:14px;">
     <input type="checkbox" id="tb-savedocs" style="width:auto;"> Save bill to Documents folder
   </label>
-  <button class="secondary" onclick="doTallyBill()">Queue Tally bill</button>
+  <div id="tallyEditBanner" class="muted" style="display:none;margin-top:10px;"></div>
+  <button id="tb-btn" class="secondary" onclick="doTallyBill()">Queue Tally bill</button>
   <div id="tallyStatus" class="muted" style="margin-top:10px;"></div>
   <div id="tallyRecent" class="muted" style="margin-top:6px;"></div>
 
@@ -356,51 +365,110 @@
   }
 
   // ---- Tally bill (queued for the office computer) ------------------------
+  var editingBillRow = null;  // queue row being edited, or null for a new bill
+  var lastTallyRows = [];     // last fetched queue rows, for the Edit buttons
+
   function doTallyBill() {
     var n = document.getElementById('tb-num').value.trim();
     var godown = document.getElementById('tb-godown').value.trim();
     var copies = document.getElementById('tb-copies').value.trim();
+    var einv = document.getElementById('tb-einv').value;
     var save = document.getElementById('tb-savedocs').checked;
     if (!n) { setBusy('tallyStatus', '<span class="err">Enter a quote number.</span>'); return; }
     if (!godown) { setBusy('tallyStatus', '<span class="err">Enter the godown name.</span>'); return; }
-    setBusy('tallyStatus', 'Queueing bill for quote #' + n + '…');
-    google.script.run
+    var payload = { quoteNumber: n, godown: godown, copies: copies, einvoice: einv, saveToDocs: save };
+    var editing = editingBillRow;
+    setBusy('tallyStatus', (editing ? 'Updating' : 'Queueing') + ' bill for quote #' + n + '…');
+    var run = google.script.run
       .withSuccessHandler(function (res) {
         setBusy('tallyStatus',
-          '<span class="ok">Bill for quote #' + res.quoteNumber + ' (' + esc(res.customer) +
-          ') queued.</span> The office computer will make it in Tally' +
-          (res.pending > 1 ? ' — ' + res.pending + ' bills waiting.' : '.'));
+          '<span class="ok">Bill for quote #' + res.quoteNumber + ' (' + esc(res.customer) + ') ' +
+          (res.updated ? 'updated' : 'queued') + '.</span> ' +
+          (res.einvoice ? 'B2B — e-invoice first, then print/save.'
+                        : 'B2C — no e-invoice needed.') +
+          (res.pending > 1 ? ' ' + res.pending + ' bills waiting.' : ''));
+        cancelBillEdit();
         loadTallyRecent();
       })
-      .withFailureHandler(function (e) { setBusy('tallyStatus', '<span class="err">' + e.message + '</span>'); })
-      .queueTallyBill({ quoteNumber: n, godown: godown, copies: copies, saveToDocs: save });
+      .withFailureHandler(function (e) { setBusy('tallyStatus', '<span class="err">' + e.message + '</span>'); });
+    if (editing) { payload.row = editing; run.updateTallyBill(payload); }
+    else run.queueTallyBill(payload);
   }
 
   // Fill the Tally section with a quote number and scroll to it.
   function tallyFor(n) {
+    cancelBillEdit();
     document.getElementById('tb-num').value = n;
     var el = document.getElementById('tb-godown');
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.focus();
   }
 
+  // Load a still-PENDING queued bill into the form to change it.
+  function billEdit(i) {
+    var b = lastTallyRows[i];
+    if (!b) return;
+    editingBillRow = b.row;
+    document.getElementById('tb-num').value = b.quote;
+    document.getElementById('tb-godown').value = b.godown || '';
+    document.getElementById('tb-copies').value = b.copies;
+    document.getElementById('tb-einv').value = b.einvoice ? 'yes' : 'no';
+    document.getElementById('tb-savedocs').checked = !!b.saveToDocs;
+    document.getElementById('tb-btn').textContent = 'Update queued bill';
+    var banner = document.getElementById('tallyEditBanner');
+    banner.style.display = 'block';
+    banner.innerHTML = '<b>Editing the queued bill for quote #' + b.quote + '</b> ' +
+      '<button class="secondary small" onclick="cancelBillEdit()">Stop editing</button>';
+    setBusy('tallyStatus', '');
+    document.getElementById('tb-num').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function cancelBillEdit() {
+    editingBillRow = null;
+    document.getElementById('tb-btn').textContent = 'Queue Tally bill';
+    var banner = document.getElementById('tallyEditBanner');
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+  }
+
+  // Cancel a still-PENDING queued bill.
+  function billCancel(row, quote) {
+    setBusy('tallyStatus', 'Cancelling the bill for quote #' + quote + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        setBusy('tallyStatus', '<span class="ok">Bill for quote #' + quote + ' cancelled.</span>');
+        if (editingBillRow === row) cancelBillEdit();
+        loadTallyRecent();
+      })
+      .withFailureHandler(function (e) { setBusy('tallyStatus', '<span class="err">' + e.message + '</span>'); })
+      .cancelTallyBill(row);
+  }
+
   function loadTallyRecent() {
     google.script.run
       .withSuccessHandler(function (rows) {
-        if (!rows || !rows.length) { setBusy('tallyRecent', ''); return; }
+        lastTallyRows = rows || [];
+        if (!lastTallyRows.length) { setBusy('tallyRecent', ''); return; }
         var h = '<b>Recent bills:</b><br>';
-        rows.forEach(function (b) {
+        lastTallyRows.forEach(function (b, i) {
           var s = b.status === 'DONE' ? '<span class="ok">DONE</span>'
-                : b.status === 'ERROR' ? '<span class="err">ERROR</span>' : esc(b.status);
+                : b.status === 'ERROR' ? '<span class="err">ERROR</span>'
+                : b.status === 'CANCELLED' ? '<span class="muted">CANCELLED</span>' : esc(b.status);
           h += '#' + b.quote + ' ' + esc(b.customer) + ' &middot; ' + esc(b.godown) +
                ' &middot; ' + b.copies + (b.copies == 1 ? ' copy' : ' copies') +
+               ' &middot; ' + (b.einvoice ? 'e-invoice' : 'B2C') +
                (b.saveToDocs ? ' &middot; save to Documents' : '') +
-               ' &middot; ' + s + (b.note ? ' <span class="muted">(' + esc(b.note) + ')</span>' : '') + '<br>';
+               ' &middot; ' + s + (b.note ? ' <span class="muted">(' + esc(b.note) + ')</span>' : '');
+          if (b.status === 'PENDING') {
+            h += ' <button class="secondary small" style="margin:2px 0;" onclick="billEdit(' + i + ')">Edit</button>' +
+                 ' <button class="secondary small" style="margin:2px 0;" onclick="billCancel(' + b.row + ',' + b.quote + ')">Cancel</button>';
+          }
+          h += '<br>';
         });
         setBusy('tallyRecent', h);
       })
       .withFailureHandler(function () { /* not critical */ })
-      .recentTallyBills(5);
+      .recentTallyBills(8);
   }
 
   // ---- Edit an existing quote --------------------------------------------

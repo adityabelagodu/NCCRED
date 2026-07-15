@@ -630,11 +630,14 @@ function tallyTab_() {
   var t = ss.getSheetByName(TALLY_TAB);
   if (!t) {
     t = ss.insertSheet(TALLY_TAB);
-    t.getRange(1, 1, 1, 8).setValues([[
+    t.getRange(1, 1, 1, 9).setValues([[
       'Requested', 'Quote #', 'Customer', 'Godown',
-      'Print copies', 'Save to Documents', 'Status', 'Done / notes'
+      'Print copies', 'Save to Documents', 'Status', 'Done / notes', 'E-invoice'
     ]]).setFontWeight('bold');
     t.setFrozenRows(1);
+  } else if (!String(t.getRange(1, 9).getValue()).trim()) {
+    // Tab from before the e-invoice column existed — add the header.
+    t.getRange(1, 9).setValue('E-invoice').setFontWeight('bold');
   }
   return t;
 }
@@ -655,15 +658,14 @@ function godownList_() {
   return out;
 }
 
-/** Called from the page: queue a Tally bill for an existing quote. */
-function queueTallyBill(req) {
+/** Validate a bill request from the page; shared by queue and update. */
+function tallyBillFields_(req) {
   var quoteNumber = parseInt(req && req.quoteNumber, 10);
   if (!quoteNumber) throw new Error('Enter a quote number.');
   var godown = String(req.godown || '').trim();
   if (!godown) throw new Error('Enter the godown name.');
   var copies = parseInt(req.copies, 10);
   if (isNaN(copies) || copies < 0 || copies > 20) copies = 1;
-  var saveToDocs = !!req.saveToDocs;
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var data = ss.getSheetByName(DATA_TAB);
@@ -673,37 +675,95 @@ function queueTallyBill(req) {
     throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
   }
 
-  var t = tallyTab_();
-  t.appendRow([new Date(), quoteNumber, summary.customer, godown,
-               copies, saveToDocs ? 'YES' : 'NO', 'PENDING', '']);
-  SpreadsheetApp.flush();
+  // E-invoice: 'yes'/'no' from the form, or 'auto' = B2B (YES) only when the
+  // customer has a GSTIN in the Customers tab; B2C bills need no e-invoice.
+  var choice = String(req.einvoice || 'auto').toLowerCase();
+  var einvoice;
+  if (choice === 'yes') einvoice = 'YES';
+  else if (choice === 'no') einvoice = 'NO';
+  else {
+    var info = customerInfo_()[String(summary.customer || '').trim().toLowerCase()];
+    einvoice = (info && info.gstin) ? 'YES' : 'NO';
+  }
 
-  // How many are now waiting, for the confirmation message.
+  return {
+    quoteNumber: quoteNumber, customer: summary.customer, godown: godown,
+    copies: copies, saveToDocs: !!req.saveToDocs, einvoice: einvoice
+  };
+}
+
+function countPendingBills_(t) {
   var pending = 0;
   if (t.getLastRow() >= 2) {
     t.getRange(2, 7, t.getLastRow() - 1, 1).getValues().forEach(function (r) {
       if (String(r[0]).trim().toUpperCase() === 'PENDING') pending++;
     });
   }
-  return { quoteNumber: quoteNumber, customer: summary.customer, pending: pending };
+  return pending;
 }
 
-/** Last few queued bills (newest first) so the page can show their status. */
+/** Called from the page: queue a Tally bill for an existing quote. */
+function queueTallyBill(req) {
+  var f = tallyBillFields_(req);
+  var t = tallyTab_();
+  t.appendRow([new Date(), f.quoteNumber, f.customer, f.godown,
+               f.copies, f.saveToDocs ? 'YES' : 'NO', 'PENDING', '', f.einvoice]);
+  SpreadsheetApp.flush();
+  return { quoteNumber: f.quoteNumber, customer: f.customer,
+           einvoice: f.einvoice === 'YES', pending: countPendingBills_(t) };
+}
+
+/** Called from the page: change a still-PENDING queued bill in place. */
+function updateTallyBill(req) {
+  var row = parseInt(req && req.row, 10);
+  var t = tallyTab_();
+  if (!row || row < 2 || row > t.getLastRow()) throw new Error('That queued bill was not found.');
+  var status = String(t.getRange(row, 7).getValue()).trim().toUpperCase();
+  if (status !== 'PENDING') {
+    throw new Error('That bill is already ' + status + ' — queue a fresh one instead.');
+  }
+  var f = tallyBillFields_(req);
+  t.getRange(row, 2, 1, 5).setValues([[f.quoteNumber, f.customer, f.godown,
+                                       f.copies, f.saveToDocs ? 'YES' : 'NO']]);
+  t.getRange(row, 9).setValue(f.einvoice);
+  SpreadsheetApp.flush();
+  return { quoteNumber: f.quoteNumber, customer: f.customer,
+           einvoice: f.einvoice === 'YES', pending: countPendingBills_(t), updated: true };
+}
+
+/** Called from the page: cancel a still-PENDING queued bill. */
+function cancelTallyBill(row) {
+  row = parseInt(row, 10);
+  var t = tallyTab_();
+  if (!row || row < 2 || row > t.getLastRow()) throw new Error('That queued bill was not found.');
+  var status = String(t.getRange(row, 7).getValue()).trim().toUpperCase();
+  if (status !== 'PENDING') {
+    throw new Error('That bill is already ' + status + ' — nothing to cancel.');
+  }
+  var stamp = Utilities.formatDate(new Date(), TIMEZONE, 'd MMM yyyy h:mm a');
+  t.getRange(row, 7, 1, 2).setValues([['CANCELLED', 'cancelled from the app — ' + stamp]]);
+  SpreadsheetApp.flush();
+  return { ok: true, row: row };
+}
+
+/** Last few queued bills (newest first) so the page can show and edit them. */
 function recentTallyBills(limit) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var t = ss.getSheetByName(TALLY_TAB);
   if (!t || t.getLastRow() < 2) return [];
   var n = t.getLastRow() - 1;
-  var vals = t.getRange(2, 1, n, 8).getValues();
+  var vals = t.getRange(2, 1, n, 9).getValues();
   var out = [];
   for (var i = n - 1; i >= 0 && out.length < (limit || 5); i--) {
     var r = vals[i];
     if (!r[1]) continue;
     out.push({
+      row: i + 2, // sheet row, so the page can edit/cancel PENDING bills
       requested: (r[0] instanceof Date) ? Utilities.formatDate(r[0], TIMEZONE, 'd MMM h:mm a') : String(r[0]),
       quote: r[1], customer: String(r[2] || ''), godown: String(r[3] || ''),
       copies: r[4], saveToDocs: String(r[5]).toUpperCase() === 'YES',
-      status: String(r[6] || ''), note: String(r[7] || '')
+      status: String(r[6] || ''), note: String(r[7] || ''),
+      einvoice: String(r[8]).toUpperCase() === 'YES'
     });
   }
   return out;
@@ -741,7 +801,7 @@ function tallyPending_() {
   var data = ss.getSheetByName(DATA_TAB);
   var custInfo = customerInfo_();
   var n = t.getLastRow() - 1;
-  var vals = t.getRange(2, 1, n, 8).getValues();
+  var vals = t.getRange(2, 1, n, 9).getValues();
   var out = [];
   for (var i = 0; i < n; i++) {
     var r = vals[i];
@@ -770,6 +830,10 @@ function tallyPending_() {
     } catch (err) {
       bill.loadError = String((err && err.message) || err);
     }
+    // B2B bills need the e-invoice BEFORE printing/saving; B2C bills don't.
+    // Older rows without the column fall back to "GSTIN present = B2B".
+    var ev = String(r[8] || '').trim().toUpperCase();
+    bill.einvoice = ev ? ev === 'YES' : !!bill.gstin;
     out.push(bill);
   }
   return out;
