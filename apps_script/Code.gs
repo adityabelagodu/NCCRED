@@ -24,6 +24,13 @@ var DEFAULT_GST_PCT = 18.0;
 var TIMEZONE = 'Asia/Kolkata';
 var FIRST_DATA_ROW = 2; // row 1 is the header on QUOTATIONS
 
+// Tally billing: the app can't reach Tally (it runs on the office computer),
+// so bill requests are QUEUED in this tab; the office computer picks them up.
+var TALLY_TAB = 'Tally Bills';
+// Shared secret for the office computer's fetch/mark-done calls (?tally=...&key=...).
+// Change it to anything private; use the same value on the office computer.
+var TALLY_API_KEY = 'rachna-7f3k-tally-2026-x9q';
+
 // Glass brand/type catalog (for the brand dropdown).
 var BRANDS = [
   'asahi', 'asahi aqua blue reflective', 'asahi bronze mirror',
@@ -56,11 +63,15 @@ function isChargeBrand_(brand) {
 }
 
 // ---- Web app entry ----------------------------------------------------------
-function doGet() {
+function doGet(e) {
+  // JSON API for the office computer's Tally bridge (?tally=pending&key=...).
+  if (e && e.parameter && e.parameter.tally) return tallyApi_(e);
+
   var t = HtmlService.createTemplateFromFile('Index');
   t.brandsJson = JSON.stringify(BRANDS);
   t.customersJson = JSON.stringify(customerList_());
   t.customerInfoJson = JSON.stringify(customerInfo_());
+  t.godownsJson = JSON.stringify(godownList_());
   return t.evaluate()
     .setTitle('Rachna Quote')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -606,6 +617,188 @@ function reprintQuote(quoteNumber) {
     throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
   }
   return exportQuoteByNumber_(quoteNumber, summary.count, summary.customer);
+}
+
+// ---- Tally billing queue ------------------------------------------------------
+// The phone queues "make this bill in Tally" requests here; the office computer
+// (which is where Tally actually runs) reads the queue, creates the voucher,
+// prints the copies, optionally saves the bill to Documents, and marks it done.
+
+/** The "Tally Bills" queue tab, created with headers on first use. */
+function tallyTab_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var t = ss.getSheetByName(TALLY_TAB);
+  if (!t) {
+    t = ss.insertSheet(TALLY_TAB);
+    t.getRange(1, 1, 1, 8).setValues([[
+      'Requested', 'Quote #', 'Customer', 'Godown',
+      'Print copies', 'Save to Documents', 'Status', 'Done / notes'
+    ]]).setFontWeight('bold');
+    t.setFrozenRows(1);
+  }
+  return t;
+}
+
+/** Godown suggestions for the form: every godown name used before, A→Z. */
+function godownList_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var t = ss.getSheetByName(TALLY_TAB);
+  if (!t || t.getLastRow() < 2) return [];
+  var vals = t.getRange(2, 4, t.getLastRow() - 1, 1).getValues();
+  var seen = {}, out = [];
+  vals.forEach(function (r) {
+    var s = String(r[0] == null ? '' : r[0]).trim();
+    if (!s || seen[s.toLowerCase()]) return;
+    seen[s.toLowerCase()] = 1; out.push(s);
+  });
+  out.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  return out;
+}
+
+/** Called from the page: queue a Tally bill for an existing quote. */
+function queueTallyBill(req) {
+  var quoteNumber = parseInt(req && req.quoteNumber, 10);
+  if (!quoteNumber) throw new Error('Enter a quote number.');
+  var godown = String(req.godown || '').trim();
+  if (!godown) throw new Error('Enter the godown name.');
+  var copies = parseInt(req.copies, 10);
+  if (isNaN(copies) || copies < 0 || copies > 20) copies = 1;
+  var saveToDocs = !!req.saveToDocs;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  if (!data) throw new Error('Tab "' + DATA_TAB + '" not found.');
+  var summary = summariseQuote_(data, quoteNumber);
+  if (summary.count === 0) {
+    throw new Error('Quote #' + quoteNumber + ' not found in ' + DATA_TAB + '.');
+  }
+
+  var t = tallyTab_();
+  t.appendRow([new Date(), quoteNumber, summary.customer, godown,
+               copies, saveToDocs ? 'YES' : 'NO', 'PENDING', '']);
+  SpreadsheetApp.flush();
+
+  // How many are now waiting, for the confirmation message.
+  var pending = 0;
+  if (t.getLastRow() >= 2) {
+    t.getRange(2, 7, t.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      if (String(r[0]).trim().toUpperCase() === 'PENDING') pending++;
+    });
+  }
+  return { quoteNumber: quoteNumber, customer: summary.customer, pending: pending };
+}
+
+/** Last few queued bills (newest first) so the page can show their status. */
+function recentTallyBills(limit) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var t = ss.getSheetByName(TALLY_TAB);
+  if (!t || t.getLastRow() < 2) return [];
+  var n = t.getLastRow() - 1;
+  var vals = t.getRange(2, 1, n, 8).getValues();
+  var out = [];
+  for (var i = n - 1; i >= 0 && out.length < (limit || 5); i--) {
+    var r = vals[i];
+    if (!r[1]) continue;
+    out.push({
+      requested: (r[0] instanceof Date) ? Utilities.formatDate(r[0], TIMEZONE, 'd MMM h:mm a') : String(r[0]),
+      quote: r[1], customer: String(r[2] || ''), godown: String(r[3] || ''),
+      copies: r[4], saveToDocs: String(r[5]).toUpperCase() === 'YES',
+      status: String(r[6] || ''), note: String(r[7] || '')
+    });
+  }
+  return out;
+}
+
+/** JSON API for the office computer (needs a deployment with access "Anyone"):
+ *    ...?tally=pending&key=KEY          -> pending bills with full quote data
+ *    ...?tally=done&key=KEY&row=N       -> mark row N done
+ *      [&status=DONE|ERROR][&note=...]
+ */
+function tallyApi_(e) {
+  var out;
+  try {
+    if (e.parameter.key !== TALLY_API_KEY) {
+      out = { error: 'bad key' };
+    } else if (e.parameter.tally === 'pending') {
+      out = { bills: tallyPending_() };
+    } else if (e.parameter.tally === 'done') {
+      out = tallyDone_(e.parameter);
+    } else {
+      out = { error: 'unknown action "' + e.parameter.tally + '"' };
+    }
+  } catch (err) {
+    out = { error: String((err && err.message) || err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Every PENDING bill, expanded with the quote's items, party details, totals. */
+function tallyPending_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var t = ss.getSheetByName(TALLY_TAB);
+  if (!t || t.getLastRow() < 2) return [];
+  var data = ss.getSheetByName(DATA_TAB);
+  var custInfo = customerInfo_();
+  var n = t.getLastRow() - 1;
+  var vals = t.getRange(2, 1, n, 8).getValues();
+  var out = [];
+  for (var i = 0; i < n; i++) {
+    var r = vals[i];
+    if (String(r[6]).trim().toUpperCase() !== 'PENDING' || !r[1]) continue;
+    var quoteNumber = parseInt(r[1], 10);
+    var bill = {
+      row: i + 2, // sheet row, for the mark-done call
+      requested: (r[0] instanceof Date) ? Utilities.formatDate(r[0], TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss") : String(r[0]),
+      quote: quoteNumber,
+      godown: String(r[3] || ''),
+      copies: parseInt(r[4], 10) || 1,
+      saveToDocuments: String(r[5]).toUpperCase() === 'YES'
+    };
+    try {
+      var q = loadQuote(quoteNumber);
+      bill.customer = q.customer;
+      bill.vehicle = q.vehicle;
+      bill.destination = q.destination;
+      bill.removeHandling = q.removeHandling;
+      bill.items = q.items;
+      var info = custInfo[(q.customer || '').trim().toLowerCase()];
+      bill.address = info ? info.address : '';
+      bill.gstin = info ? info.gstin : '';
+      var loc = findQuoteRows_(data, quoteNumber);
+      if (loc.count) bill.totals = quoteTotals_(data, loc);
+    } catch (err) {
+      bill.loadError = String((err && err.message) || err);
+    }
+    out.push(bill);
+  }
+  return out;
+}
+
+/** Taxable / CGST / SGST / Total for a quote's block, from its N (pre-tax) sum. */
+function quoteTotals_(data, loc) {
+  var nvals = data.getRange(loc.firstRow, 14, loc.count, 1).getValues(); // N
+  var tax = 0;
+  nvals.forEach(function (r) { var v = Number(r[0]); if (!isNaN(v)) tax += v; });
+  return {
+    taxable: round_(tax, 2),
+    cgst: round_(tax * 0.09, 2),
+    sgst: round_(tax * 0.09, 2),
+    total: Math.round(tax * 1.18)
+  };
+}
+
+/** Mark a queued bill done (or errored) — called by the office computer. */
+function tallyDone_(p) {
+  var row = parseInt(p.row, 10);
+  var t = tallyTab_();
+  if (!row || row < 2 || row > t.getLastRow()) throw new Error('Bad row "' + p.row + '".');
+  var status = String(p.status || 'DONE').toUpperCase() === 'ERROR' ? 'ERROR' : 'DONE';
+  var note = String(p.note || '');
+  var stamp = Utilities.formatDate(new Date(), TIMEZONE, 'd MMM yyyy h:mm a');
+  t.getRange(row, 7, 1, 2).setValues([[status, (note ? note + ' — ' : '') + stamp]]);
+  SpreadsheetApp.flush();
+  return { ok: true, row: row, status: status };
 }
 
 // ---- Helpers ----------------------------------------------------------------

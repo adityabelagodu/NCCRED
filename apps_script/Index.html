@@ -81,6 +81,24 @@
   <div id="reprintStatus" class="muted" style="margin-top:10px;"></div>
 
   <hr>
+  <h2>Tally bill</h2>
+  <div class="sub">Queues the bill for the office computer, which makes it in Tally,
+    prints the copies and (optionally) saves it to the Documents folder.</div>
+  <label>Quote number</label>
+  <input id="tb-num" inputmode="numeric" placeholder="e.g. 1311">
+  <label>Godown name</label>
+  <input id="tb-godown" list="godownList" placeholder="search or type a godown…" autocomplete="off">
+  <datalist id="godownList"></datalist>
+  <label>Number of print copies</label>
+  <input id="tb-copies" inputmode="numeric" value="1">
+  <label style="display:flex;align-items:center;gap:10px;font-weight:600;margin-top:14px;">
+    <input type="checkbox" id="tb-savedocs" style="width:auto;"> Save bill to Documents folder
+  </label>
+  <button class="secondary" onclick="doTallyBill()">Queue Tally bill</button>
+  <div id="tallyStatus" class="muted" style="margin-top:10px;"></div>
+  <div id="tallyRecent" class="muted" style="margin-top:6px;"></div>
+
+  <hr>
   <div style="display:flex;justify-content:space-between;align-items:center;">
     <h2 style="margin:0;">Quote history</h2>
     <button class="secondary small" onclick="loadHistory()">Refresh</button>
@@ -94,6 +112,7 @@
   var BRANDS = <?!= brandsJson ?>;
   var CUSTOMERS = <?!= customersJson ?>;
   var CUSTOMER_INFO = <?!= customerInfoJson ?>;
+  var GODOWNS = <?!= godownsJson ?>;
   var itemCount = 0;
   var lastPreview = null;
   var editingQuote = null;   // quote number being edited, or null for a new quote
@@ -302,7 +321,8 @@
           '<div class="card"><div class="ok">Saved quote #' + res.quoteNumber +
           ' (' + res.orientation + ').</div>' +
           '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.' +
-          ' You can keep working meanwhile.</div></div>';
+          ' You can keep working meanwhile.</div>' +
+          '<button class="secondary small" onclick="tallyFor(' + res.quoteNumber + ')">Make Tally bill</button></div>';
         lastPreview = null;
         loadHistory(); // refresh the history list with the new quote
         google.script.run
@@ -335,6 +355,54 @@
       .reprintQuote(n);
   }
 
+  // ---- Tally bill (queued for the office computer) ------------------------
+  function doTallyBill() {
+    var n = document.getElementById('tb-num').value.trim();
+    var godown = document.getElementById('tb-godown').value.trim();
+    var copies = document.getElementById('tb-copies').value.trim();
+    var save = document.getElementById('tb-savedocs').checked;
+    if (!n) { setBusy('tallyStatus', '<span class="err">Enter a quote number.</span>'); return; }
+    if (!godown) { setBusy('tallyStatus', '<span class="err">Enter the godown name.</span>'); return; }
+    setBusy('tallyStatus', 'Queueing bill for quote #' + n + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        setBusy('tallyStatus',
+          '<span class="ok">Bill for quote #' + res.quoteNumber + ' (' + esc(res.customer) +
+          ') queued.</span> The office computer will make it in Tally' +
+          (res.pending > 1 ? ' — ' + res.pending + ' bills waiting.' : '.'));
+        loadTallyRecent();
+      })
+      .withFailureHandler(function (e) { setBusy('tallyStatus', '<span class="err">' + e.message + '</span>'); })
+      .queueTallyBill({ quoteNumber: n, godown: godown, copies: copies, saveToDocs: save });
+  }
+
+  // Fill the Tally section with a quote number and scroll to it.
+  function tallyFor(n) {
+    document.getElementById('tb-num').value = n;
+    var el = document.getElementById('tb-godown');
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.focus();
+  }
+
+  function loadTallyRecent() {
+    google.script.run
+      .withSuccessHandler(function (rows) {
+        if (!rows || !rows.length) { setBusy('tallyRecent', ''); return; }
+        var h = '<b>Recent bills:</b><br>';
+        rows.forEach(function (b) {
+          var s = b.status === 'DONE' ? '<span class="ok">DONE</span>'
+                : b.status === 'ERROR' ? '<span class="err">ERROR</span>' : esc(b.status);
+          h += '#' + b.quote + ' ' + esc(b.customer) + ' &middot; ' + esc(b.godown) +
+               ' &middot; ' + b.copies + (b.copies == 1 ? ' copy' : ' copies') +
+               (b.saveToDocs ? ' &middot; save to Documents' : '') +
+               ' &middot; ' + s + (b.note ? ' <span class="muted">(' + esc(b.note) + ')</span>' : '') + '<br>';
+        });
+        setBusy('tallyRecent', h);
+      })
+      .withFailureHandler(function () { /* not critical */ })
+      .recentTallyBills(5);
+  }
+
   // ---- Edit an existing quote --------------------------------------------
   function doUpdate() {
     if (!lastPreview) return;
@@ -348,7 +416,8 @@
         document.getElementById('preview').innerHTML =
           '<div class="card"><div class="ok">Updated quote #' + res.quoteNumber +
           ' (' + res.orientation + ').</div>' +
-          '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.</div></div>';
+          '<div class="muted" id="pdfState">Making the PDF&hellip; the button will appear here.</div>' +
+          '<button class="secondary small" onclick="tallyFor(' + res.quoteNumber + ')">Make Tally bill</button></div>';
         lastPreview = null;
         editingQuote = null;
         updateModeUI();
@@ -474,7 +543,8 @@
            '<td class="r">&#8377;' + money(q.total) + '</td>' +
            '<td class="r" style="white-space:nowrap;">' +
            '<button class="secondary small" style="margin:0 0 4px;" onclick="pdfHistory(' + q.quote + ')">PDF</button> ' +
-           '<button class="secondary small" style="margin:0;" onclick="editHistory(' + q.quote + ')">Edit</button>' +
+           '<button class="secondary small" style="margin:0 0 4px;" onclick="editHistory(' + q.quote + ')">Edit</button> ' +
+           '<button class="secondary small" style="margin:0;" onclick="tallyFor(' + q.quote + ')">Bill</button>' +
            '</td></tr>';
     });
     h += '</tbody></table></div>';
@@ -493,8 +563,10 @@
 
   fillDatalist('brandList', BRANDS);       // stock-item suggestions
   fillDatalist('customerList', CUSTOMERS); // customer suggestions
-  addItem();     // start with one item row
-  loadHistory(); // show the quote history at the bottom
+  fillDatalist('godownList', GODOWNS);     // godowns used before
+  addItem();         // start with one item row
+  loadHistory();     // show the quote history at the bottom
+  loadTallyRecent(); // show the last few queued Tally bills
 </script>
 </body>
 </html>
