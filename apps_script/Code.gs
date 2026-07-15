@@ -28,8 +28,8 @@ var FIRST_DATA_ROW = 2; // row 1 is the header on QUOTATIONS
 // so bill requests are QUEUED in this tab; the office computer picks them up.
 var TALLY_TAB = 'Tally Bills';
 // Shared secret for the office computer's fetch/mark-done calls (?tally=...&key=...).
-// Change it to anything private; use the same value on the office computer.
-var TALLY_API_KEY = 'rachna-7f3k-tally-2026-x9q';
+// Set it to anything private; use the same value on the office computer.
+var TALLY_API_KEY = 'CHANGE-ME-TO-A-PRIVATE-KEY';
 
 // Glass brand/type catalog (for the brand dropdown).
 var BRANDS = [

@@ -47,6 +47,14 @@ the quote and PDF. Do these steps once on a Windows/Mac computer in Chrome.
 - **Remove handling charges:** tick **Remove handling charges (1%)** at the top
   before previewing — every line on that quote is saved with handling set to 0.
 - **Re-print an old quote:** type its number under "Re-print an old quote" → **Get PDF**.
+- **Tally bill:** tap **Make Tally bill** on a saved quote (or **Bill** on a
+  history row), fill the **godown name**, **number of print copies** and whether
+  to **save the bill to the Documents folder**, then **Queue Tally bill**. The
+  request goes to a "Tally Bills" tab in the sheet; **the office computer**
+  (where TallyPrime runs) makes the actual voucher — see
+  `apps_script/office_tally_bridge.md`. For the office computer to read the
+  queue, make a SECOND deployment of this web app with access **Anyone** and use
+  that URL (key-protected via `TALLY_API_KEY` in Code.gs) only for the bridge.
 
 New quotes are inserted **directly after your last quote** — the app finds the
 bottom of the ledger by the **thickness column** (filled on every real line),
