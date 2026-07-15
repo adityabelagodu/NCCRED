@@ -70,11 +70,16 @@ function doGet(e) {
   var t = HtmlService.createTemplateFromFile('Index');
   t.brandsJson = JSON.stringify(BRANDS);
   t.customersJson = JSON.stringify(customerList_());
-  t.customerInfoJson = JSON.stringify(customerInfo_());
   t.godownsJson = JSON.stringify(godownList_());
   return t.evaluate()
     .setTitle('Rachna Quote')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Address/GSTIN map, fetched by the page AFTER it paints (it's ~2000 customers
+ *  — inlining it in the HTML made every page load slow). */
+function getCustomerInfo() {
+  return customerInfo_();
 }
 
 /** Address (Customers col B) and GSTIN (col C) keyed by lower-cased name, so the
@@ -309,6 +314,7 @@ function commitQuote(quote) {
     data.insertRowsAfter(lastLedger, quote.lines.length);
     writeQuoteRows_(data, start, quoteNumber, quote);
     SpreadsheetApp.flush();
+    freezeRows_(data, start, quote.lines.length);
   } finally {
     lock.releaseLock();
   }
@@ -478,6 +484,7 @@ function updateQuote(quote) {
     data.insertRowsAfter(loc.firstRow - 1, quote.lines.length);
     writeQuoteRows_(data, loc.firstRow, quoteNumber, quote);
     SpreadsheetApp.flush();
+    freezeRows_(data, loc.firstRow, quote.lines.length);
   } finally {
     lock.releaseLock();
   }
@@ -546,6 +553,45 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
   } finally {
     DriveApp.getFileById(temp.getId()).setTrashed(true);
   }
+}
+
+/** Convert freshly written quote rows to plain values (the formulas have just
+ *  been computed by the flush). This matches the sheet's own convention —
+ *  recent rows were always hardcoded values — and it keeps the workbook fast:
+ *  the app used to leave ~28 live formulas per line (whole-column SUMIF and
+ *  stockbook VLOOKUPs among them) which Google recalculated on EVERY save and
+ *  PDF, making everything slower as quotes piled up. */
+function freezeRows_(data, start, n) {
+  var rng = data.getRange(start, 1, n, 30); // A..AD
+  rng.setValues(rng.getValues());
+  SpreadsheetApp.flush();
+}
+
+/**
+ * ONE-OFF maintenance, run it from the editor (function dropdown ->
+ * "freezeLedger" -> Run): converts EVERY formula in the real quote ledger to
+ * its current value. Numbers on screen stay exactly the same — the sheet just
+ * stops recalculating thousands of old formulas on every change, which is what
+ * was making loading/saving/PDFs slower and slower. New quotes freeze
+ * themselves automatically, so this only needs to be run once.
+ */
+function freezeLedger() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = ss.getSheetByName(DATA_TAB);
+  var bottom = lastLedgerRow_(data);
+  if (bottom < FIRST_DATA_ROW) return 'Ledger is empty — nothing to freeze.';
+  // First real data row = first filled thickness cell (rows above it are the
+  // brand drop-down list and must not be touched).
+  var e = data.getRange(FIRST_DATA_ROW, 5, bottom - FIRST_DATA_ROW + 1, 1).getValues();
+  var first = 0;
+  for (var i = 0; i < e.length; i++) {
+    if (e[i][0] !== '' && e[i][0] !== null) { first = FIRST_DATA_ROW + i; break; }
+  }
+  if (!first) return 'No data rows found.';
+  var msg = 'Froze rows ' + first + '-' + bottom + ' (' + (bottom - first + 1) + ' rows) to values.';
+  freezeRows_(data, first, bottom - first + 1);
+  Logger.log(msg);
+  return msg;
 }
 
 /** Bottom of the quote ledger, found via the THICKNESS column (E).
@@ -967,8 +1013,8 @@ function exportTabPdf_(spreadsheetId, gid, portrait, fileName) {
     '&horizontal_alignment=CENTER&vertical_alignment=TOP';
   // A brand-new file can need a moment before the export endpoint serves it.
   var resp;
-  for (var attempt = 0; attempt < 4; attempt++) {
-    if (attempt > 0) Utilities.sleep(1500);
+  for (var attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) Utilities.sleep(800);
     resp = UrlFetchApp.fetch(url, {
       headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
       muteHttpExceptions: true
@@ -1013,14 +1059,7 @@ function lookupStock(item) {
   lock.waitLock(20000);
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var src = ss.getSheetByName(DATA_TAB);
-    if (!src) return { unavailable: true };
-    var nCols = Math.max(26, src.getLastColumn());
-
-    var tmplRow = findStockFormulaRow_(src);
-    if (!tmplRow) return { unavailable: true };
-
-    var helper = getStockHelper_(ss, src, tmplRow, nCols);
+    var helper = getStockHelper_(ss);
     // Feed the item into E:H (Thickness, Brand, Length, Breadth).
     helper.getRange(2, 5, 1, 4).setValues([[thickness, brand, length, breadth]]);
     SpreadsheetApp.flush();
@@ -1035,25 +1074,14 @@ function lookupStock(item) {
   }
 }
 
-/** Find a recent QUOTATIONS row whose U/W/Y actually hold formulas to clone. */
-function findStockFormulaRow_(src) {
-  var last = src.getLastRow();
-  if (last < FIRST_DATA_ROW) return null;
-  var start = Math.max(FIRST_DATA_ROW, last - 120);
-  var n = last - start + 1;
-  var f = src.getRange(start, STOCK_COL_J, n, 5).getFormulas(); // U..Y
-  for (var i = n - 1; i >= 0; i--) {
-    if (f[i][0] || f[i][2] || f[i][4]) return start + i; // U, W, Y
-  }
-  return null;
-}
-
-/** Hidden helper sheet holding one row that mirrors a QUOTATIONS row's formulas. */
-function getStockHelper_(ss, src, tmplRow, nCols) {
+/** Hidden helper sheet holding one row with the stock-lookup formulas (T..Z),
+ *  written explicitly from ledgerFormulas_ — quote rows themselves are frozen
+ *  to values, so there is no formula row to clone from any more. */
+function getStockHelper_(ss) {
   var helper = ss.getSheetByName(STOCK_HELPER);
   if (!helper) helper = ss.insertSheet(STOCK_HELPER);
-  var formulas = src.getRange(tmplRow, 1, 1, nCols).getFormulasR1C1();
-  helper.getRange(2, 1, 1, nCols).setFormulasR1C1(formulas);
+  var f = ledgerFormulas_(2);
+  helper.getRange(2, 20, 1, 7).setFormulas([[f[20], f[21], f[22], f[23], f[24], f[25], f[26]]]);
   try { helper.hideSheet(); } catch (e) { /* already hidden */ }
   return helper;
 }

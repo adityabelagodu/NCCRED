@@ -51,7 +51,7 @@
   <div id="editBanner" class="card" style="display:none;background:#fff7ec;border-color:#e8c9a0;"></div>
 
   <label>Customer name</label>
-  <input id="customer" list="customerList" placeholder="search or type a name…" autocomplete="off" oninput="showCustomerInfo()">
+  <input id="customer" list="customerList" placeholder="search or type a name…" autocomplete="off" oninput="customerTyped()">
   <datalist id="customerList"></datalist>
   <datalist id="brandList"></datalist>
   <div id="custInfo" class="muted" style="margin-top:6px;"></div>
@@ -120,14 +120,17 @@
 <script>
   var BRANDS = <?!= brandsJson ?>;
   var CUSTOMERS = <?!= customersJson ?>;
-  var CUSTOMER_INFO = <?!= customerInfoJson ?>;
+  var CUSTOMER_INFO = {};    // address/GSTIN map, fetched AFTER the page paints
   var GODOWNS = <?!= godownsJson ?>;
   var itemCount = 0;
   var lastPreview = null;
   var editingQuote = null;   // quote number being edited, or null for a new quote
-  var allHistory = [];       // full history from the server
+  var allHistory = [];       // history rows loaded so far
+  var historyFull = false;   // whether allHistory holds EVERY quote
+  var historyLoadingAll = false;
   var historyShown = 25;     // how many rows currently rendered
   var HISTORY_PAGE = 25;
+  var HISTORY_FIRST = 60;    // quotes fetched on page load (older ones on demand)
 
   // Fill a <datalist> with options (search suggestions; user can still type own).
   function fillDatalist(id, arr) {
@@ -135,6 +138,21 @@
     dl.innerHTML = (arr || []).map(function (x) {
       return '<option value="' + String(x).replace(/"/g, '&quot;') + '">';
     }).join('');
+  }
+
+  // The customer list is ~2000 names — putting them ALL in the dropdown made
+  // the page slow to load and laggy to type in. Instead, suggest only the
+  // first 20 matches for what's typed so far.
+  function customerTyped() {
+    var q = document.getElementById('customer').value.trim().toLowerCase();
+    var matches = [];
+    if (q) {
+      for (var i = 0; i < CUSTOMERS.length && matches.length < 20; i++) {
+        if (CUSTOMERS[i].toLowerCase().indexOf(q) >= 0) matches.push(CUSTOMERS[i]);
+      }
+    }
+    fillDatalist('customerList', matches);
+    showCustomerInfo();
   }
 
   // Show the picked customer's address + GSTIN (from the Customers tab) under
@@ -587,19 +605,44 @@
     setBusy('history', 'Loading…');
     document.getElementById('histMore').style.display = 'none';
     google.script.run
-      .withSuccessHandler(function (rows) { allHistory = rows || []; historyShown = HISTORY_PAGE; renderHistory(); })
+      .withSuccessHandler(function (rows) {
+        allHistory = rows || [];
+        historyFull = allHistory.length < HISTORY_FIRST; // fewer than asked = that's everything
+        historyShown = HISTORY_PAGE;
+        renderHistory();
+      })
       .withFailureHandler(function (e) { setBusy('history', '<span class="err">' + e.message + '</span>'); })
+      .recentQuotes(HISTORY_FIRST); // recent quotes only — older ones fetched on demand
+  }
+
+  // Fetch EVERY quote once (for searching or scrolling far back).
+  function loadAllHistory() {
+    if (historyFull || historyLoadingAll) return;
+    historyLoadingAll = true;
+    google.script.run
+      .withSuccessHandler(function (rows) {
+        allHistory = rows || [];
+        historyFull = true;
+        historyLoadingAll = false;
+        renderHistory();
+      })
+      .withFailureHandler(function () { historyLoadingAll = false; })
       .recentQuotes(0); // 0 = all
   }
 
   function renderHistory() {
     var term = (document.getElementById('histSearch').value || '').trim().toLowerCase();
+    if (term && !historyFull) loadAllHistory(); // search must cover old quotes too
     var filtered = allHistory.filter(function (q) {
       if (!term) return true;
       return String(q.quote).indexOf(term) >= 0 || (q.customer || '').toLowerCase().indexOf(term) >= 0;
     });
     var more = document.getElementById('histMore');
-    if (!filtered.length) { setBusy('history', term ? 'No matching quotes.' : 'No quotes yet.'); more.style.display = 'none'; return; }
+    if (!filtered.length) {
+      setBusy('history', term ? (historyFull ? 'No matching quotes.' : 'Searching older quotes…') : 'No quotes yet.');
+      more.style.display = 'none';
+      return;
+    }
     if (historyShown < HISTORY_PAGE) historyShown = HISTORY_PAGE;
     var shown = filtered.slice(0, historyShown);
     var h = '<div class="histwrap"><table class="hist"><thead><tr>' +
@@ -617,10 +660,14 @@
     });
     h += '</tbody></table></div>';
     document.getElementById('history').innerHTML = h;
-    more.style.display = (filtered.length > historyShown) ? 'block' : 'none';
+    more.style.display = (filtered.length > historyShown || !historyFull) ? 'block' : 'none';
   }
 
-  function showMoreHistory() { historyShown += HISTORY_PAGE; renderHistory(); }
+  function showMoreHistory() {
+    historyShown += HISTORY_PAGE;
+    if (!historyFull && historyShown >= allHistory.length) loadAllHistory();
+    renderHistory();
+  }
 
   function pdfHistory(n) {
     document.getElementById('reprintNum').value = n;
@@ -629,12 +676,16 @@
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  fillDatalist('brandList', BRANDS);       // stock-item suggestions
-  fillDatalist('customerList', CUSTOMERS); // customer suggestions
-  fillDatalist('godownList', GODOWNS);     // godowns used before
+  fillDatalist('brandList', BRANDS);   // stock-item suggestions (small list)
+  fillDatalist('godownList', GODOWNS); // godowns used before
+  // (customer suggestions fill as you type — see customerTyped)
   addItem();         // start with one item row
-  loadHistory();     // show the quote history at the bottom
+  loadHistory();     // show recent quote history at the bottom
   loadTallyRecent(); // show the last few queued Tally bills
+  // Address/GSTIN details arrive in the background so the page paints fast.
+  google.script.run
+    .withSuccessHandler(function (m) { CUSTOMER_INFO = m || {}; showCustomerInfo(); })
+    .getCustomerInfo();
 </script>
 </body>
 </html>
