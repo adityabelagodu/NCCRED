@@ -355,9 +355,15 @@ function writeQuoteRows_(data, start, quoteNumber, quote) {
     return [l.description || ''];
   }));
 
+  // A key as plain TEXT (e.g. "13571" = quote 1357, line 1): the print tabs
+  // match it with VLOOKUP(G4&line), which builds a TEXT key — so this must be
+  // text, never a number, or the printed quote comes out blank. The sheet's
+  // own A formula computes the same value.
+  data.getRange(start, 1, n, 1).setNumberFormat('@').setValues(
+    quote.lines.map(function (_, idx) { return [String(quoteNumber) + (idx + 1)]; }));
+
   // The sheet's own calc formulas, written explicitly (see ledgerFormulas_).
   var fRows = quote.lines.map(function (_, idx) { return ledgerFormulas_(start + idx); });
-  data.getRange(start, 1, n, 1).setFormulas(fRows.map(function (f) { return [f[1]]; }));
   data.getRange(start, 11, n, 6).setFormulas(fRows.map(function (f) {
     return [f[11], f[12], f[13], f[14], f[15], f[16]];
   }));
@@ -563,7 +569,19 @@ function exportQuoteByNumber_(quoteNumber, count, customer) {
  *  PDF, making everything slower as quotes piled up. */
 function freezeRows_(data, start, n) {
   var rng = data.getRange(start, 1, n, 30); // A..AD
-  rng.setValues(rng.getValues());
+  var vals = rng.getValues();
+  // Column A holds the TEXT lookup keys the print tabs match on (e.g. "13571").
+  // They LOOK numeric, so a plain re-write makes Sheets store them as numbers —
+  // then the print tabs' VLOOKUP(G4&line, A:...) finds nothing and the quote
+  // prints blank. Force the A column to text and keep the keys as strings.
+  vals.forEach(function (row) {
+    var v = row[0];
+    if (v === '' || v === null) return;
+    if (typeof v === 'number') v = String(Math.round(v));
+    row[0] = String(v);
+  });
+  data.getRange(start, 1, n, 1).setNumberFormat('@'); // '@' = plain text
+  rng.setValues(vals);
   SpreadsheetApp.flush();
 }
 
